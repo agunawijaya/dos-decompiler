@@ -2,9 +2,10 @@
 
 An MZ executable is decompiled. A `.COM` file can be *reconstructed*: turned
 back into assembly that rebuilds the original file byte for byte, with the
-rebuild checked rather than assumed. That is rung 1 of the ladder in
-[05-verification.md](05-verification.md), the only rung that leaves nothing to
-argue about, and for `.COM` files it is reachable in a single run.
+rebuild checked rather than assumed. That is rung 1 of the
+[verification ladder](../README.md#the-verification-ladder), the only rung that
+leaves nothing to argue about, and for `.COM` files it is reachable in a single
+run.
 
 The tool is `tools/comrec.py`. The rest of this page is why it works and where
 it stops.
