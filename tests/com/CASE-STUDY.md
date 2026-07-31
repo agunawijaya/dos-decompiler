@@ -49,6 +49,22 @@ Within the region that actually holds code, 87.7% came back as instructions.
 That is the number worth quoting, and the tool now prints both so the
 distinction cannot be lost by accident.
 
+```mermaid
+flowchart LR
+    subgraph whole["the whole file — 16,400 bytes"]
+        direction LR
+        D["11,072 bytes of data<br/><i>tables, sprites, font, text</i>"]
+        C["5,328 bytes of code"]
+        D --- C
+    end
+    whole -->|"28.6%<br/>describes the game"| M1["misleading"]
+    C -->|"87.7%<br/>describes the recovery"| M2["the number to quote"]
+    style M1 fill:#f8d7da,stroke:#721c24
+    style M2 fill:#d4edda,stroke:#155724
+    style C fill:#d4edda,stroke:#155724
+    style D fill:#e2e3e5,stroke:#495057
+```
+
 ## What the program turned out to be
 
 Hand-written assembly. Not one stack-frame prologue in 16 KB, which settles the

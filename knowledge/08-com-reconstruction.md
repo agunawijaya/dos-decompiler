@@ -33,6 +33,33 @@ The tool never emits assembly it has not checked. Each round:
 5. Anything that disagrees is retried with a different spelling, and pinned to
    raw bytes if no spelling works.
 
+```mermaid
+flowchart TB
+    W["<b>walk</b><br/>recursive descent from every entry point"]
+    E["<b>emit</b><br/>NASM covering every byte:<br/>instructions where found, db elsewhere"]
+    A["<b>assemble</b><br/>nasm -f bin, asking for a listing"]
+    R{"NASM<br/>rejected any line?"}
+    C{"listing bytes ==<br/>the file's bytes,<br/>instruction by instruction?"}
+    V{"more spellings<br/>left to try?"}
+    S["try the next spelling<br/><i>strict word / strict byte /<br/>strict near / strict short</i>"]
+    P["pin to raw bytes<br/><i>disassembly kept in a comment</i>"]
+    G{"any unreferenced gap<br/>that decodes as code?"}
+    X["claim it and walk again"]
+    D(["<b>BYTE-IDENTICAL</b><br/>write the .asm"])
+
+    W --> E --> A --> R
+    R -->|yes| P
+    R -->|no| C
+    C -->|no| V
+    V -->|yes| S --> W
+    V -->|no| P --> W
+    C -->|yes| G
+    G -->|yes| X --> W
+    G -->|no| D
+    style D fill:#d4edda,stroke:#155724
+    style P fill:#fff3cd,stroke:#856404
+```
+
 The loop ends when the rebuilt file matches the original exactly. It cannot end
 any other way, so the output is either right or absent.
 
@@ -113,7 +140,24 @@ ParaTrooper's first twelve bytes are:
     retf
 
 That is a far return to `(CS+0x2C4):0` — file offset `0x2B40`, addressed from
-base 0 rather than 0x100.
+base 0 rather than 0x100:
+
+```mermaid
+flowchart LR
+    subgraph naive["what a disassembler assumes"]
+        N["one segment<br/>everything addressed from 0x100"]
+    end
+    subgraph truth["what the file actually is"]
+        direction TB
+        T1["<b>0x0000</b> stub<br/>base 0x100"]
+        T2["<b>0x000C</b> data<br/>reached via DS = PSP + 0x11"]
+        T3["<b>0x2B40</b> code<br/><b>base 0x0000</b>"]
+        T1 --> T2 --> T3
+    end
+    naive -->|"every branch target<br/>past 0x2B40 is wrong"| truth
+    style N fill:#f8d7da,stroke:#721c24
+    style T3 fill:#d4edda,stroke:#155724
+```
 
 Miss it and everything after `0x2B40` disassembles against the wrong base.
 Every branch target is wrong, the recursive descent walks off into data, and
