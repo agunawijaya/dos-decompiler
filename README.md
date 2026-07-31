@@ -25,6 +25,49 @@ Start with the [worked example](#worked-example-start-to-finish).
 
 ---
 
+## Why bother with 40-year-old games
+
+This exists to **learn from them**, not to pirate or repackage them.
+
+A 1984 game had 64 KB of addressable data, no floating point worth using, a
+processor measured in single-digit megahertz, and a display with four colours.
+Every technique in such a program is there because it had to be. That makes
+these binaries unusually good teaching material: the constraints are visible in
+the code, and the reasoning behind each decision is recoverable.
+
+Some of what came out of the one program this toolkit was validated against:
+
+- **A drawing primitive that is also a collision test.** Sopwith draws sprites
+  by XOR-ing them into CGA memory. XOR again and the sprite erases itself,
+  restoring what was underneath — no backing store needed. And the value read
+  back tells you whether something was already there, so the same operation
+  detects collisions. One mechanism doing three jobs.
+- **Trigonometry without floating point.** A 16-entry sine table of integers
+  scaled by 256, indexed by angle. Cosine is the same table read at an offset.
+  Multiply, then shift right by 8.
+- **Polymorphism in C, in 1984.** Every game object carries `ob_movef` and
+  `ob_drawf` — function pointers. The main loop walks a list and calls through
+  them, which is a vtable written by hand a decade before anyone called it that.
+  It is also why a decompiler cannot find those functions: nothing *calls* them
+  by name.
+- **A program that brought its own runtime.** The shipped binary shares not one
+  byte of startup code with the compiler its own makefile names. The author
+  replaced the C library rather than pay for what he did not use.
+- **Data as landmarks.** Four of its source files contain no code at all — 60 KB
+  of sprite bitmaps, terrain, and level configuration.
+
+The same is true of the craft on this side of the problem. Working out *why*
+Ghidra misses a third of the functions teaches more about linkers, calling
+conventions and memory models than any tutorial, because the answer has to be
+right — a linker map is checking your work.
+
+Everything here is tooling and documentation. **No game code, no compiler code,
+and no copyrighted binaries are distributed**; the signature databases are
+masked byte fingerprints used for identification, and `tests/sopwith/` contains
+build recipes that point at Sopwith's own GPL source rather than including it.
+
+---
+
 ## The pipeline
 
 ```mermaid
@@ -700,6 +743,23 @@ What is distinctive here: signature databases built from the actual period
 compilers, equivalence decided by execution rather than scored, and every
 accuracy claim measured with a regression harness that fails when a change
 makes things worse.
+
+---
+
+## Licence
+
+**GNU General Public License v3.0** — see [`LICENSE`](LICENSE).
+
+Chosen deliberately rather than for convenience. This toolkit exists because
+David L. Clark released Sopwith's source under the GPL in 2003, and that act is
+the only reason any of its accuracy figures can be checked at all. Passing the
+same terms on is the appropriate way to say thank you: anyone may use, study and
+modify this, and anything built on it stays open for the next person trying to
+learn from it.
+
+The licence covers the tooling and documentation in this repository. It does not
+and cannot cover the games you point it at, or the period compilers you supply —
+those remain their owners'.
 
 ---
 
