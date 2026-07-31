@@ -131,8 +131,8 @@ Two things to know before reporting results:
   (`tools/triage.py` reports prologue density). A program with none was written
   in assembly and has no C to recover — say so rather than implying otherwise.
 - **Quote the code-region figure, not the whole-file one.** These games are
-  mostly artwork and lookup tables. ParaTrooper comes back at 28.5% of the file
-  but 87.5% of the region that actually holds code; the first number describes
+  mostly artwork and lookup tables. ParaTrooper comes back at 28.6% of the file
+  but 87.7% of the region that actually holds code; the first number describes
   the game, the second describes the recovery.
 
 `knowledge/08-com-reconstruction.md` covers the traps — chiefly a stub that

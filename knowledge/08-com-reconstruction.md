@@ -166,11 +166,11 @@ ParaTrooper (1982, Orion Software), 16,400 bytes, no manual flags:
 |---|---|
 | rebuild | byte-identical, SHA-256 verified independently of the tool |
 | instructions disassembled | 2,017 |
-| pinned to fixed bytes | 245 (12%, all encoding-form alternates) |
-| code region `0x2B40..0x4010` | 87.5% recovered as instructions |
+| pinned to fixed bytes | 236 (12%, all encoding-form alternates) |
+| code region `0x2B40..0x4010` | 87.7% recovered as instructions |
 | data head `0x0000..0x2B40` | 11,072 bytes, correctly left as data |
 
-The whole-file figure is 28.5%, and it is the wrong number to quote: two thirds
+The whole-file figure is 28.6%, and it is the wrong number to quote: two thirds
 of this program is a screen-offset table and sprite data. A percentage of the
 whole file measures the game, not the recovery.
 

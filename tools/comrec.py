@@ -92,6 +92,20 @@ class Segment:
 
 REP_PREFIXES = {"rep", "repe", "repne", "repz", "repnz"}
 
+# Capstone hands back the 32-bit name for these even in 16-bit mode: a bare
+# 0x98 is reported as `cwde` when in real mode it is `cbw`. Both the reading
+# and the rebuild suffer. NASM assembles `cwde` as `66 98`, two bytes, so the
+# instruction fails verification and gets pinned to raw bytes -- correct, but
+# it loses eight instructions in ParaTrooper and leaves a comment stating the
+# wrong mnemonic, which is worse than losing them.
+#
+# The prefix is what distinguishes the two, so the fix is to trust the bytes
+# rather than the name.
+WIDTH_ALIASES = {
+    "cwde": "cbw", "cdq": "cwd", "jecxz": "jcxz", "iretd": "iret",
+    "pushfd": "pushf", "popfd": "popf", "pushad": "pushaw", "popad": "popaw",
+}
+
 
 def to_nasm(insn):
     """Translate capstone's Intel syntax into something NASM accepts.
@@ -107,6 +121,10 @@ def to_nasm(insn):
     a 16 KB program, all failing for this single reason.
     """
     mn, ops = insn.mnemonic, insn.op_str
+
+    # No 0x66 prefix means the operand size is the mode default -- 16 bits.
+    if mn in WIDTH_ALIASES and insn.bytes and insn.bytes[0] != 0x66:
+        mn = WIDTH_ALIASES[mn]
 
     parts = mn.split()
     if len(parts) == 2 and parts[0] in REP_PREFIXES and parts[1] in STRING_OPS:

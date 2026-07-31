@@ -21,10 +21,10 @@ No flags. The tool works out the rest.
 
 ```
 segments    : 0x0000+ @ base 0x0100, 0x2B40+ @ base 0x0000   (detected from the entry stub)
-instructions: 2,017 disassembled (245 pinned to fixed bytes to preserve encoding)
-bytes as code: 4,675 / 16,400  (28.5% of file)
+instructions: 2,017 disassembled (236 pinned to fixed bytes to preserve encoding)
+bytes as code: 4,686 / 16,400  (28.6% of file)
 code region : 0x2B40..0x4010  (5,328 bytes)
-  recovered : 4,663 bytes as instructions (87.5% of the code region)
+  recovered : 4,674 bytes as instructions (87.7% of the code region)
   data head : 0x0000..0x2B40 left as data (11,072 bytes)
 
 BYTE-IDENTICAL
@@ -39,12 +39,13 @@ nasm -f bin -o rebuilt.com src/paratrooper.asm
 
 ## Read the second number, not the first
 
-28.5% of the file came back as code. That figure describes the game, not the
-recovery: two thirds of ParaTrooper is a screen row-offset table and sprite
-data. The table gives itself away immediately — `0x2A, 0x92, 0xFA, 0x162,
-0x1CA, 0x232` — a constant stride of 104 bytes, one entry per scanline.
+28.6% of the file came back as code. That figure describes the game, not the
+recovery: two thirds of ParaTrooper is lookup tables, sprite data, a digit
+font and text. The first table gives its shape away immediately — `0x2A, 0x92,
+0xFA, 0x162, 0x1CA, 0x232`, a constant stride of 104 bytes — though what reads
+it was never found, so what it indexes remains a guess.
 
-Within the region that actually holds code, 87.5% came back as instructions.
+Within the region that actually holds code, 87.7% came back as instructions.
 That is the number worth quoting, and the tool now prints both so the
 distinction cannot be lost by accident.
 
@@ -93,7 +94,7 @@ before it was trusted.
 
 Both are now detected automatically. Neither was, at first.
 
-## Four bugs this found
+## Five bugs this found
 
 The attempt was worth more for what it broke than for what it produced.
 
@@ -122,8 +123,19 @@ address 8 as `8`, not `0x8`, and the code only accepted operands beginning
 by a fixture — ParaTrooper has no code at such a low address and would never
 have revealed it.
 
-The last two are the argument for writing fixtures instead of only testing
-against the real thing. A real binary exercises the paths it happens to use.
+**32-bit mnemonics in 16-bit mode.** Capstone reports the single byte `0x98` as
+`cwde`, its 32-bit name, even when told the mode is 16-bit — in real mode it is
+`cbw`. NASM assembles `cwde` as `66 98`, two bytes, so verification failed and
+those instructions were pinned. The rebuild stayed correct, which is why this
+survived so long: the only visible symptom was nine instructions written as
+bytes with a comment naming the wrong instruction. Trusting the encoding over
+the name fixed both.
+
+The last three are the argument for testing against something other than the
+target. Two were caught by written fixtures; the third was caught by trying to
+quote a routine accurately in prose, which turns out to be its own kind of
+test — writing documentation forces you to read output you would otherwise only
+run.
 
 ## What changed in the toolkit
 

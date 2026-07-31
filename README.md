@@ -156,8 +156,8 @@ route:
 |---|---|
 | Rebuild | **byte-identical**, SHA-256 checked outside the tool |
 | Layout — the CS-reloading entry stub | detected, no manual flags |
-| Instructions recovered, code region | **87.5%** (4,663 of 5,328 bytes) |
-| Pinned to fixed bytes | 245 of 2,017, all encoding-form alternates |
+| Instructions recovered, code region | **87.7%** (4,674 of 5,328 bytes) |
+| Pinned to fixed bytes | 236 of 2,017, all encoding-form alternates |
 
 Written up in [`tests/com/CASE-STUDY.md`](tests/com/CASE-STUDY.md), including
 the four bugs the attempt exposed.
@@ -259,10 +259,10 @@ why not — there is no third answer, and nothing to interpret.
 
 ```
 segments    : 0x0000+ @ base 0x0100, 0x2B40+ @ base 0x0000   (detected from the entry stub)
-instructions: 2,017 disassembled (245 pinned to fixed bytes to preserve encoding)
-bytes as code: 4,675 / 16,400  (28.5% of file)
+instructions: 2,017 disassembled (236 pinned to fixed bytes to preserve encoding)
+bytes as code: 4,686 / 16,400  (28.6% of file)
 code region : 0x2B40..0x4010  (5,328 bytes)
-  recovered : 4,663 bytes as instructions (87.5% of the code region)
+  recovered : 4,674 bytes as instructions (87.7% of the code region)
   data head : 0x0000..0x2B40 left as data (11,072 bytes)
 
 BYTE-IDENTICAL. wrote src\paratrooper.asm
@@ -275,8 +275,8 @@ begin with — ParaTrooper has not one stack-frame prologue in 16 KB — so ther
 is no C behind the file to recover. Check before promising any.
 
 **The whole-file percentage describes the game, not the recovery.** These
-programs are mostly sprites and lookup tables. 28.5% of ParaTrooper came back
-as code; 87.5% of the region that actually holds code did.
+programs are mostly sprites and lookup tables. 28.6% of ParaTrooper came back
+as code; 87.7% of the region that actually holds code did.
 
 The output is meant to be read, not just assembled. Strings come back as text,
 and every data row carries both its file offset and the address the code uses
