@@ -14,9 +14,12 @@ instructions in one place is what stops the two from drifting apart.
 Everything else is detail, but these decide whether the work is worth anything.
 
 **1. Run `python tools/triage.py GAME.EXE` before promising the user anything,
-and report its verdict.** Packed executables, overlaid programs, `.COM` files
-and protected-mode binaries are out of scope. Interpreted engines — Sierra SCI
-and AGI, LucasArts SCUMM, DAAD — are the expensive case: decompiling one
+and report its verdict.** Packed executables, overlaid programs and
+protected-mode binaries are out of scope. `.COM` files take a separate and
+stronger route — `python tools/comrec.py GAME.COM --out src/game.asm` rebuilds
+them byte-for-byte and proves it — but the result is assembly, not C, so check
+for stack-frame prologues before promising any. Interpreted engines — Sierra
+SCI and AGI, LucasArts SCUMM, DAAD — are the expensive case: decompiling one
 succeeds and produces a correct rendering of a virtual machine with none of the
 game in it.
 

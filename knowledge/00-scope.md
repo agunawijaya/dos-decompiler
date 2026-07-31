@@ -29,7 +29,7 @@ CGA). Where a tool assumes something, it assumes what Sopwith does.
 | Packed, PKLITE | **Image yes, entry point no** | decompression verified on a 1988 game; the format does not state its entry point and no heuristic found it |
 | Packed, other (LZEXE, DIET) | **Probably the same** | untested; the mechanism is format-independent |
 | Overlaid (FBOV, Borland/Microsoft overlays) | **No** | detected and warned about; nothing here handles them |
-| `.COM` files | **No** | no MZ header; single segment loaded at 0x100 |
+| `.COM` files | **Yes, by a separate route** | no MZ header to interpret, so `comrec.py` reconstructs the file directly and proves it byte-for-byte — but the result is assembly, not C. See [08-com-reconstruction.md](08-com-reconstruction.md) |
 | Self-modifying or copy-protected | **No** | static analysis and emulation both mislead |
 | DOS extender / protected mode (DOS4GW, PMODE/W) | **No** | LE/LX executables, a different format and era |
 | Interpreted engines (SCI, SCUMM, AGI, DAAD, Z-machine) | **Wrong tool** | see below — this is the trap |
@@ -101,8 +101,9 @@ Not hypothetical. Run against binaries lying around on one developer's machine:
 | `SOPWITH.EXE` (1984) | in scope | small model, 242 prologues/4.1 per KB — compiled C |
 | `CONTRAP.EXE` (Bantam, 1988) | **blocked** | PKLITE-packed |
 | `BANTLOGO.EXE` (Bantam, 1988) | **blocked** | PKLITE-packed |
-| `MODE.COM` | **blocked** | not an MZ executable |
+| `MODE.COM` | routed to `comrec.py` | not an MZ executable, and does not need to be |
 | `UNZIP.EXE` | **blocked** | UPX-packed, 87 KB past the load image |
+| `ParaTrooper.1982.com` (Orion, 1982) | rebuilt byte-for-byte | hand-written assembly, so assembly is all there is to recover |
 | a Watcom rebuild of Sopwith | workable, caveats | frame pointers omitted, so boundary recovery suffers |
 
 Two of the six are period commercial games, and **both are packed**. That is

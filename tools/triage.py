@@ -143,13 +143,24 @@ def analyse(path):
 
     if mz is None:
         suffix = Path(path).suffix.lower()
+        if suffix == ".com":
+            # A .COM has no header to disagree with: the whole file is the
+            # image, loaded at 0x100. That makes it the easiest thing here to
+            # reconstruct exactly, so it gets its own route rather than a
+            # refusal -- comrec.py rebuilds it to a byte-identical .asm.
+            findings.append(("route", "raw .COM image",
+                             "No MZ header, and none needed. The file loads at "
+                             "offset 0x100 as a single segment. Use comrec.py, "
+                             "which reassembles to a byte-for-byte copy and "
+                             "proves it, rather than the MZ pipeline."))
+            findings.append(("note", "next step",
+                             f"python tools/comrec.py \"{path}\" "
+                             f"--out src/{Path(path).stem.lower()}.asm"))
+            return {"file": str(path), "format": "COM",
+                    "verdict": {"in_scope": True, "confidence": "high",
+                                "route": "comrec"},
+                    "findings": findings}
         findings.append(("blocker", "not an MZ executable",
-                         "This is a .COM file or raw binary. The pipeline reads "
-                         "MZ headers for segments and entry point; none of that "
-                         "exists here. A .COM loads at offset 0x100 in a single "
-                         "segment -- workable by hand in Ghidra, but not with "
-                         "these tools as they stand."
-                         if suffix == ".com" else
                          "No MZ signature. Not a DOS executable, or a container "
                          "of some other kind."))
         return {"file": str(path), "format": "not-MZ",
@@ -299,8 +310,9 @@ def report(r):
                 f"Entry  : {r['entry']}"]
     out.append("")
 
-    order = {"blocker": 0, "warn": 1, "info": 2}
-    tag = {"blocker": "BLOCKER", "warn": "WARN   ", "info": "INFO   "}
+    order = {"blocker": 0, "route": 1, "warn": 2, "info": 3, "note": 4}
+    tag = {"blocker": "BLOCKER", "route": "ROUTE  ", "warn": "WARN   ",
+           "info": "INFO   ", "note": "NEXT   "}
     # Two independent checks can identify the same packer; say it once.
     seen, unique = set(), []
     for f in sorted(r["findings"], key=lambda f: order[f[0]]):
@@ -315,7 +327,11 @@ def report(r):
         out.append("")
 
     v = r["verdict"]
-    if v["in_scope"] and v["confidence"] == "high":
+    if v.get("route") == "comrec":
+        out.append("VERDICT: in scope, by the .COM route. Run comrec.py as "
+                   "shown above; it either produces a byte-identical rebuild "
+                   "or says why not.")
+    elif v["in_scope"] and v["confidence"] == "high":
         out.append("VERDICT: in scope. Run tools/pipeline.ps1.")
     elif v["in_scope"]:
         out.append("VERDICT: probably workable, with caveats above. Expect the "

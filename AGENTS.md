@@ -93,7 +93,9 @@ DOS programs that fall outside the toolkit:
   the decompressor. Run `tools/unpack.py` first.
 - **Overlaid** programs. Several functions share the same addresses at different
   times; nothing here handles that.
-- **`.COM` files** and protected-mode DOS-extender binaries. Different formats.
+- **Protected-mode DOS-extender binaries.** A different format entirely.
+- **`.COM` files** do not go through this pipeline, but they are not out of
+  scope: they take a separate and stronger route. See below.
 - **Interpreted engines** — Sierra SCI and AGI, LucasArts SCUMM, DAAD. The
   executable is a virtual machine and the game is in the data files beside it.
   Decompiling succeeds and tells you nothing you wanted. This is the expensive
@@ -103,6 +105,39 @@ DOS programs that fall outside the toolkit:
 
 `knowledge/00-scope.md` has the full matrix and separates failures that are loud
 from failures that are silent.
+
+### If it is a .COM
+
+```
+python tools/comrec.py GAME.COM --out src/game.asm
+```
+
+A `.COM` has no header, no relocations, and no separation between file and
+memory image, so the whole MZ pipeline is beside the point. What replaces it is
+stronger: `comrec.py` rebuilds the file as NASM source and **proves** the
+result by reassembling it and comparing bytes. It prints `BYTE-IDENTICAL` or
+it prints why not. There is no middle answer to interpret.
+
+Confirm it yourself rather than taking the tool's word:
+
+```
+nasm -f bin -o rebuilt.com src/game.asm
+# then compare SHA-256 of rebuilt.com against the original
+```
+
+Two things to know before reporting results:
+
+- **It produces assembly, not C.** Check for stack-frame prologues first
+  (`tools/triage.py` reports prologue density). A program with none was written
+  in assembly and has no C to recover — say so rather than implying otherwise.
+- **Quote the code-region figure, not the whole-file one.** These games are
+  mostly artwork and lookup tables. ParaTrooper comes back at 28.5% of the file
+  but 87.5% of the region that actually holds code; the first number describes
+  the game, the second describes the recovery.
+
+`knowledge/08-com-reconstruction.md` covers the traps — chiefly a stub that
+reloads CS so that half the file is addressed from a different base, which
+fails silently and confusingly if missed.
 
 ### If it is packed
 
@@ -399,5 +434,9 @@ not mean nothing got worse.
 - `knowledge/06-lessons-from-siblings.md` — corrections paid for by two other
   reconstructions
 - `knowledge/07-extended-reconstruction.md` — the verified-reconstruction workflow
+- `knowledge/08-com-reconstruction.md` — the `.COM` route, which reaches
+  byte-identity in one run
 - `tests/sopwith/CASE-STUDY.md` — the whole method worked through, including the
   hypotheses that turned out wrong
+- `tests/com/CASE-STUDY.md` — a 1982 `.COM` game rebuilt byte-for-byte, and the
+  four bugs the attempt exposed

@@ -76,7 +76,9 @@ flowchart TD
     S --> T["triage.py<br/><i>is that one in scope?</i>"]
     T -->|packed| U["unpack.py<br/><i>run the decompressor</i>"]
     U --> T
-    T -->|"interpreted engine<br/>overlaid · .COM<br/>protected mode"| X["stop — wrong tool<br/>see knowledge/00-scope.md"]
+    T -->|"interpreted engine<br/>overlaid<br/>protected mode"| X["stop — wrong tool<br/>see knowledge/00-scope.md"]
+    T -->|".COM"| C["comrec.py<br/><i>rebuild and prove it</i>"]
+    C --> CB["game.asm<br/><i>reassembles byte-identical</i>"]
     T -->|in scope| P["pipeline.ps1<br/><i>Ghidra + function recovery</i>"]
     P --> F["decompiled.c<br/>functions.json"]
     F --> AN["anchors.py<br/><i>names from evidence alone</i>"]
@@ -91,6 +93,7 @@ flowchart TD
     style T fill:#fff3cd,stroke:#856404,stroke-width:2px
     style X fill:#f8d7da,stroke:#721c24
     style R fill:#d4edda,stroke:#155724
+    style CB fill:#d4edda,stroke:#155724
 ```
 
 **Survey and triage first, always.** A DOS release is rarely one file — one 1988
@@ -119,7 +122,7 @@ for the one case where location matters.
 | Packed with LZEXE / DIET | untested; same mechanism should apply |
 | Turbo / Borland Pascal | poorly; different convention, no signature database |
 | Overlaid programs | no |
-| `.COM` files | no |
+| `.COM` files | **yes, by a separate route** — `comrec.py` rebuilds them byte-for-byte, but gives assembly rather than C |
 | DOS extenders, protected mode | no |
 | Interpreted engines — SCI, SCUMM, AGI, DAAD | **wrong tool entirely** |
 
@@ -145,6 +148,19 @@ the compiler its own makefile names so the ground truth is period-correct:
 > **Scope note.** One program, small model, ~200 functions, no overlays, no
 > packing. These are calibration for a program of that shape, not universal
 > constants.
+
+And on **ParaTrooper** (1982), a 16 KB `.COM` file, via the separate `.COM`
+route:
+
+| Stage | Result |
+|---|---|
+| Rebuild | **byte-identical**, SHA-256 checked outside the tool |
+| Layout — the CS-reloading entry stub | detected, no manual flags |
+| Instructions recovered, code region | **87.5%** (4,663 of 5,328 bytes) |
+| Pinned to fixed bytes | 245 of 2,017, all encoding-form alternates |
+
+Written up in [`tests/com/CASE-STUDY.md`](tests/com/CASE-STUDY.md), including
+the four bugs the attempt exposed.
 
 ### What this does *not* give you
 
@@ -220,6 +236,70 @@ say so.
 | 3 | per-function behavioural equivalence — `emuverify.py` | this function is that function |
 | 4 | pixel-identical frames under identical input | the program behaves the same |
 | 5 | "looks right" | **nothing** |
+
+For MZ executables, rung 1 is the goal of a long reconstruction loop. For
+`.COM` files it is where you start — see below.
+
+---
+
+## The .COM route
+
+A `.COM` file has no header, no relocations, and no difference between what is
+on disk and what is in memory. The whole MZ pipeline is beside the point, and
+what replaces it is stronger.
+
+```powershell
+python tools\comrec.py GAME.COM --out src\game.asm
+```
+
+`comrec.py` disassembles, emits NASM source covering every byte, reassembles
+it, and compares the result to the original. It repeats until the rebuild
+matches exactly, then writes the file. It prints `BYTE-IDENTICAL` or it prints
+why not — there is no third answer, and nothing to interpret.
+
+```
+segments    : 0x0000+ @ base 0x0100, 0x2B40+ @ base 0x0000   (detected from the entry stub)
+instructions: 2,017 disassembled (245 pinned to fixed bytes to preserve encoding)
+bytes as code: 4,675 / 16,400  (28.5% of file)
+code region : 0x2B40..0x4010  (5,328 bytes)
+  recovered : 4,663 bytes as instructions (87.5% of the code region)
+  data head : 0x0000..0x2B40 left as data (11,072 bytes)
+
+BYTE-IDENTICAL. wrote src\paratrooper.asm
+```
+
+Two things to understand before quoting a number from that:
+
+**It gives assembly, not C.** Many `.COM` games were written in assembly to
+begin with — ParaTrooper has not one stack-frame prologue in 16 KB — so there
+is no C behind the file to recover. Check before promising any.
+
+**The whole-file percentage describes the game, not the recovery.** These
+programs are mostly sprites and lookup tables. 28.5% of ParaTrooper came back
+as code; 87.5% of the region that actually holds code did.
+
+The output is meant to be read, not just assembled. Strings come back as text,
+and every data row carries both its file offset and the address the code uses
+to reach it:
+
+```nasm
+L_02B5C:
+    mov si, 0x19f6
+L_02B5F:
+    cld
+    lodsb
+    cmp al, 0
+    je L_02B6D
+    mov ah, 0xe
+    int 0x10
+    jmp L_02B5F
+...
+    db 0x00, 0x0D, 0x0A                                    ; 0x01A05  ds:0x19F5
+    db 'Do you have the Color/Graphics'                    ; 0x01A08  ds:0x19F8
+```
+
+Details and traps in
+[`knowledge/08-com-reconstruction.md`](knowledge/08-com-reconstruction.md).
 
 ---
 
@@ -429,6 +509,11 @@ python tools\triage.py path\to\GAME.EXE
 # 0b. If it says packed:
 python tools\unpack.py path\to\GAME.EXE -o unpacked.exe
 python tools\triage.py unpacked.exe
+
+# 0c. If it is a .COM, stop here — a different and stronger route.
+#     Rebuilds the file byte-for-byte and says so, or says why not.
+python tools\comrec.py path\to\GAME.COM --out src\game.asm
+nasm -f bin -o rebuilt.com src\game.asm      # then compare SHA-256 yourself
 
 # 1. Structure, decompilation, function recovery
 .\tools\pipeline.ps1 -Exe path\to\GAME.EXE -OutDir .\out
@@ -661,6 +746,7 @@ tools/
   survey.py                  what is in this game folder? run this first
   triage.py                  is this one executable in scope?
   unpack.py                  run a packer's decompressor and dump the result
+  comrec.py                  rebuild a .COM as NASM source, byte-for-byte, and prove it
   pipeline.ps1               one command: .EXE in, decompiled C out
   mzinfo.py                  MZ structure, segments, packer and overlay detection
   anchors.py                 identify functions from evidence, with no source
@@ -686,8 +772,10 @@ knowledge/
   05-prior-art.md            other projects, and where this sits among them
   06-lessons-from-siblings.md corrections paid for by two sibling reconstructions
   07-extended-reconstruction.md the verified-reconstruction workflow
+  08-com-reconstruction.md   the .COM route, which reaches byte-identity in one run
 signatures/                  C runtime fingerprints: MS C 5.0, MS C 5.1, Watcom
 tests/sopwith/               the validation fixture and full case study
+tests/com/                   .COM fixtures, rebuilt byte-identically on every run
 AGENTS.md                    the method, for any agent or human
 SKILL.md                     Claude Code wrapper
 env.example.ps1              copy to env.ps1, point at your own tool copies
@@ -720,6 +808,24 @@ PASS  all metrics at or above their floors
 It fails if precision or recall drops below the recorded floors.
 [`tests/sopwith/CASE-STUDY.md`](tests/sopwith/CASE-STUDY.md) walks the whole
 method through that example, including the hypotheses that turned out wrong.
+
+The `.COM` route has its own suite, which needs nothing but NASM:
+
+```powershell
+python tests\com\regress.py
+```
+
+```
+  PASS  encodings    byte-identical, 69.7% as instructions
+  PASS  farstub      byte-identical, 7.9% as instructions
+  PASS  plain        byte-identical, 32.8% as instructions
+```
+
+Each fixture is reassembled and compared by SHA-256, so a regression cannot
+pass by accident. They are written rather than taken from a real game — games
+of the period are still under copyright — and two of the four bugs found while
+building this route were caught by a fixture rather than by the game, because a
+real binary only exercises the paths it happens to use.
 
 ---
 

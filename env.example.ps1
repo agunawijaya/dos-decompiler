@@ -36,6 +36,11 @@ $env:MSC_HOME = 'C:\Applications\msc50'
 
 # --- optional ---------------------------------------------------------------
 
+# NASM, required only for the .COM route (tools/comrec.py) and its tests.
+# A single executable, no installer: https://www.nasm.us/
+# Leave this unset if nasm is already on PATH.
+$env:NASM = 'C:\Applications\nasm\nasm-2.16.03\nasm.exe'
+
 # DOSBox-X, to run period DOS toolchains and the games themselves
 $env:DOSBOX = 'C:\DOSBox-X\dosbox-x.exe'
 
