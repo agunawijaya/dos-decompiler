@@ -1,0 +1,43 @@
+# sw.lnk -- reconstructed link script.
+#
+# The original SW.LNK was not part of the GPL source release. This version
+# recovers the module order from the dependency list in SW.MAK, which lists the
+# objects in link order, and expresses it for Open Watcom's wlink.
+#
+# Module order matters: it decides the layout of _TEXT and therefore every
+# function address in the resulting binary.
+
+system dos
+name sopwith.exe
+
+option map=sopwith.map
+option verbose
+option statics
+
+file _ints.obj
+file swcomm.obj
+file _inta.obj
+file swgrph.obj
+file swutil.obj
+file _dkio.obj
+file _intc.obj
+file swasynio.obj
+file swmain.obj
+file swmove.obj
+file swinit.obj
+file swauto.obj
+file swdisp.obj
+file swcollsn.obj
+file swplanes.obj
+file swsymbol.obj
+file swend.obj
+file swgames.obj
+file swground.obj
+file swhist.obj
+file swmisc.obj
+file swmultio.obj
+file swobject.obj
+file swsound.obj
+file swtitle.obj
+file bmblib.obj
+file compat.obj

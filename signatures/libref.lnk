@@ -1,0 +1,6 @@
+system dos
+name libref.exe
+option map=libref.map
+option verbose
+option statics
+file libref.obj

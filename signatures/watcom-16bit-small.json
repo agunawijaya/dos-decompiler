@@ -1,0 +1,1525 @@
+{
+  "source": "libref.exe",
+  "count": 217,
+  "signatures": [
+    {
+      "name": "__STK",
+      "module": "clibs.lib(stk)",
+      "length": 50,
+      "bytes": "3bc473132bc4f7d83b062a0677068cd03b0640047401c30e5ab81d04bb0100e9",
+      "mask": "11101111110010111100101111001000"
+    },
+    {
+      "name": "printf_",
+      "module": "clibs.lib(printf.c)",
+      "length": 21,
+      "bytes": "53525589e58d5e0a8b5608b85004e81d2a5d5a5bc3",
+      "mask": "111111101101001001111"
+    },
+    {
+      "name": "sprintf_",
+      "module": "clibs.lib(sprintf.c)",
+      "length": 90,
+      "bytes": "53525589e58b46088d5e0c8b560ae8b22a5d5a5bc3535689c38b77048a0430e4",
+      "mask": "11111110110110100111111111101111"
+    },
+    {
+      "name": "sscanf_",
+      "module": "clibs.lib(sscanf.c)",
+      "length": 21,
+      "bytes": "53525589e58b46088d5e0c8b560ae8d2ff5d5a5bc3",
+      "mask": "111111101101101001111"
+    },
+    {
+      "name": "puts_",
+      "module": "clibs.lib(puts.c)",
+      "length": 38,
+      "bytes": "5352ba5004e8c40089c33dffff75035a5bc3ba5004b80a00e80b003dffff74ef",
+      "mask": "11100100111001011110010010010010"
+    },
+    {
+      "name": "fputc_",
+      "module": "clibs.lib(fputc.c)",
+      "length": 166,
+      "bytes": "5351565789c189d38b77048b44063d0100740c85c07403e96f00c744060100f6",
+      "mask": "11111111110110100101110100110000"
+    },
+    {
+      "name": "fputs_",
+      "module": "clibs.lib(fputs.c)",
+      "length": 584,
+      "bytes": "535156575589e583ec0289c689d38b7f04837d0400744c31fff6470704754b89",
+      "mask": "11111111101111110110010111100100"
+    },
+    {
+      "name": "fopen_",
+      "module": "clibs.lib(fopen.c)",
+      "length": 157,
+      "bytes": "5331dbe8b8ff5bc35351525689c18b1ee60985db7512bee8098b1c85db74333b",
+      "mask": "11110011111111110011101001111100"
+    },
+    {
+      "name": "__doclose_",
+      "module": "clibs.lib(fclose.c)",
+      "length": 142,
+      "bytes": "535156575589e583ec0489c68956fef6440603746831fff644071075658b4402",
+      "mask": "11111111101111011001011110010110"
+    },
+    {
+      "name": "__shutdown_stream_",
+      "module": "clibs.lib(fclose.c)",
+      "length": 17,
+      "bytes": "5389c3e86cff89c289d8e8313789d05bc3",
+      "mask": "11110011111001111"
+    },
+    {
+      "name": "fclose_",
+      "module": "clibs.lib(fclose.c)",
+      "length": 34,
+      "bytes": "53528b1ee60985db74123b470274048b1febf3ba0100e8d6ff5a5bc3b8ffff5a",
+      "mask": "11110011101101011101001001111001"
+    },
+    {
+      "name": "fread_",
+      "module": "clibs.lib(fread.c)",
+      "length": 330,
+      "bytes": "56575589e583ec065289ce8946fef64406017503e98b0089d8f7e289c385c075",
+      "mask": "11111110111110110010100111111110"
+    },
+    {
+      "name": "fwrite_",
+      "module": "clibs.lib(fwrite.c)",
+      "length": 438,
+      "bytes": "56575589e583ec06505289cef64406027503e9900089d8f7e289c385c07503e9",
+      "mask": "11111110111111001010011111111100"
+    },
+    {
+      "name": "fseek_",
+      "module": "clibs.lib(fseek.c)",
+      "length": 255,
+      "bytes": "56575589e583ec0a89c689df8956fef64406067459f6440710753c83fa017508",
+      "mask": "11111110111111011001011001011010"
+    },
+    {
+      "name": "ftell_",
+      "module": "clibs.lib(ftell.c)",
+      "length": 78,
+      "bytes": "53515689c3f64706807409f64707107403e8be348b4708e8a93489c189d683fa",
+      "mask": "11111110010110010100110100111100"
+    },
+    {
+      "name": "fgets_",
+      "module": "clibs.lib(fgets.c)",
+      "length": 98,
+      "bytes": "5156575589e583ec0489c789de8b470630e4806706cf243089fb8946fc4a85d2",
+      "mask": "11111111011111101111001011110111"
+    },
+    {
+      "name": "__fill_buffer_",
+      "module": "clibs.lib(fgetc.c)",
+      "length": 96,
+      "bytes": "53525689c68b5c04837f0400744c8a4407a820740aa8067406b80020e810348b",
+      "mask": "11111110110010110101010101001000"
+    },
+    {
+      "name": "FICRQQ",
+      "module": "emu87.lib(initemu.asm)",
+      "length": 85,
+      "bytes": "1c8807c744020100ebe9f64407047410bb01008b148b4408e80133894402ebcc",
+      "mask": "10111000101100101001111010011010"
+    },
+    {
+      "name": "fgetc_",
+      "module": "clibs.lib(fgetc.c)",
+      "length": 127,
+      "bytes": "535689c38b77048b44063d0100740985c07544c744060100f6470601753fc706",
+      "mask": "11111101101001011101100011001000"
+    },
+    {
+      "name": "strcpy_",
+      "module": "clibs.lib(strcpy.c)",
+      "length": 65,
+      "bytes": "565789d689c757f7c601007408ac8805473c0074268b0484c0741e890583c702",
+      "mask": "11111111100101111101011111011110"
+    },
+    {
+      "name": "strncpy_",
+      "module": "clibs.lib(strncpy.c)",
+      "length": 41,
+      "bytes": "51565789d685db75045f5e59c38cda89d989c78ec257acaa84c0e0fa33c0d1e9",
+      "mask": "11111111011111111111111111101111"
+    },
+    {
+      "name": "strcat_",
+      "module": "clibs.lib(strcat.c)",
+      "length": 49,
+      "bytes": "51565789d689c71e075783c9ff32c0f2ae4f8a04880584c074108a440183c602",
+      "mask": "11111111111101111111111110110110"
+    },
+    {
+      "name": "strncat_",
+      "module": "clibs.lib(strncat.c)",
+      "length": 46,
+      "bytes": "51565789d689da85db75045f5e59c38cdb89c78ec357b9ffff33c0f2ae4f8bca",
+      "mask": "11111111110111111111111001111111"
+    },
+    {
+      "name": "strcmp_",
+      "module": "clibs.lib(strcmp.c)",
+      "length": 40,
+      "bytes": "51565789d789c68cd88ec0a675114f4e83c9ff33c0f2aef7d12bf9f3a6740519",
+      "mask": "11111111111110111101111111111100"
+    },
+    {
+      "name": "strncmp_",
+      "module": "clibs.lib(strncmp.c)",
+      "length": 48,
+      "bytes": "51565789d785db750831c989c85f5e59c38cda89d989c68ec28bd732c0f2ae8b",
+      "mask": "11111111011111111111111111111110"
+    },
+    {
+      "name": "strlen_",
+      "module": "clibs.lib(strlen.c)",
+      "length": 23,
+      "bytes": "515789c78cd88ec083c9ff33c0f2aef7d14989c85f59c3",
+      "mask": "11111111110111111111111"
+    },
+    {
+      "name": "strchr_",
+      "module": "clibs.lib(strchr.c)",
+      "length": 29,
+      "bytes": "535689c38a0730e439d0740c89de8a044384c075ef5e5bc389d85e5bc3",
+      "mask": "11111111111011111111011111111"
+    },
+    {
+      "name": "strrchr_",
+      "module": "clibs.lib(strrchr.c)",
+      "length": 34,
+      "bytes": "515789c78cd88ec0b9ffff32c0f2aef7d14f8ac2fdf2aefc75038bcf4189c85f",
+      "mask": "11111111100111111111111110111111"
+    },
+    {
+      "name": "strstr_",
+      "module": "clibs.lib(strstr.c)",
+      "length": 272,
+      "bytes": "535156575589e583ec0689c18956fe89d3803f007426807f01007428bbffff31",
+      "mask": "11111111101111011110101100101000"
+    },
+    {
+      "name": "memcpy_",
+      "module": "clibs.lib(memcpy.c)",
+      "length": 29,
+      "bytes": "51565789d989d689c7578cd88ec0d1e9f3a513c9f3a45f89f85f5e59c3",
+      "mask": "11111111111111111111111111111"
+    },
+    {
+      "name": "memmove_",
+      "module": "clibs.lib(memmove.c)",
+      "length": 77,
+      "bytes": "51565789c689d989d339c2742a85c9742639c2732601ca39c2762089d301ce4b",
+      "mask": "11111111111101110111011111011111"
+    },
+    {
+      "name": "memcmp_",
+      "module": "clibs.lib(memcmp.c)",
+      "length": 28,
+      "bytes": "51565789d989d789c68cd88ec033c0f3a6740519c083d8ff5f5e59c3",
+      "mask": "1111111111111111110111101111"
+    },
+    {
+      "name": "memset_",
+      "module": "clibs.lib(memset.c)",
+      "length": 27,
+      "bytes": "515789c789d988d0571e078ae0d1e9f3ab13c9f3aa5f89f85f59c3",
+      "mask": "111111111111111111111111111"
+    },
+    {
+      "name": "malloc_",
+      "module": "clibs.lib(nmalloc.c)",
+      "length": 185,
+      "bytes": "53515256575589e583ec0489c785c074523deaff774d05030024fe8946fc3d06",
+      "mask": "11111111110111110100101001011000"
+    },
+    {
+      "name": "calloc_",
+      "module": "clibs.lib(calloc.c)",
+      "length": 40,
+      "bytes": "535189d331d231c9e87f3389c385d2750ae833ff85c07508595bc331c0595bc3",
+      "mask": "11111111100111110100111011111111"
+    },
+    {
+      "name": "realloc_",
+      "module": "clibs.lib(nrealloc.c)",
+      "length": 85,
+      "bytes": "5351565789c189d385c0743285d27435e8673389c689c8e86f3389c785c07517",
+      "mask": "11111111111011101001111100111110"
+    },
+    {
+      "name": "free_",
+      "module": "clibs.lib(nfree.c)",
+      "length": 195,
+      "bytes": "53525685c074558b36ec0985f6743439c677088b1401f239d0724389f38b7402",
+      "mask": "11111101100111011101111111011110"
+    },
+    {
+      "name": "atoi_",
+      "module": "clibs.lib(atoi.c)",
+      "length": 81,
+      "bytes": "5351525689c38a0730e489c6f684270202740343ebf030c93c2d7524b1014331",
+      "mask": "11111111111111000101101110101010"
+    },
+    {
+      "name": "atol_",
+      "module": "clibs.lib(atol.c)",
+      "length": 1191,
+      "bytes": "5351565589e583ec0289c68a1c30fff687270202740346ebf2887efe80fb2d75",
+      "mask": "11111111011111111000101101101100"
+    },
+    {
+      "name": "strtod_",
+      "module": "math87s.lib(strtod.c)",
+      "length": 444,
+      "bytes": "5589e55383ec2289d38d56dce8a5fe89c380e37f89c285db751685db750f895e",
+      "mask": "11111101111010011110111110111000"
+    },
+    {
+      "name": "__init_87_emulator",
+      "module": "emu87.lib(initemu.asm)",
+      "length": 783,
+      "bytes": "53e8a23ba22006a21d06a21c068a1e320684c07502fec384db7421c7061e067c",
+      "mask": "11001001001001100111011111000000"
+    },
+    {
+      "name": "labs_",
+      "module": "clibs.lib(labs.c)",
+      "length": 13,
+      "bytes": "85d27c01c3f7daf7d883da00c3",
+      "mask": "1110111111101"
+    },
+    {
+      "name": "rand_",
+      "module": "clibs.lib(rand.c)",
+      "length": 50,
+      "bytes": "535152b8160685c075045a595bc3bb6d4eb9c641a116068b161806e84e280539",
+      "mask": "11110011101111100100100110010000"
+    },
+    {
+      "name": "srand_",
+      "module": "clibs.lib(rand.c)",
+      "length": 23,
+      "bytes": "5289c2b8160685c075025ac331c089161606a318065ac3",
+      "mask": "11110011101111110010011"
+    },
+    {
+      "name": "getenv_",
+      "module": "clibs.lib(getenv.c)",
+      "length": 113,
+      "bytes": "535152565789c78b36260a85f6745e85c0745a8b1485d2745489fb89d0e82763",
+      "mask": "11111111100111011101111101111100"
+    },
+    {
+      "name": "system_",
+      "module": "clibs.lib(system.c)",
+      "length": 130,
+      "bytes": "5351525589e583ec0489c2b87200e87eff89c385d2743330c985c07503bb8200",
+      "mask": "11111111011100100111110111110100"
+    },
+    {
+      "name": "IF@DTAN",
+      "module": "math87s.lib(trig87)",
+      "length": 188,
+      "bytes": "803e1c06037513f6064607017505cd35f2eb03e8fa61cd39d8c3558bec505053",
+      "mask": "11000101100010101101001011111111"
+    },
+    {
+      "name": "IF@DATAN",
+      "module": "math87s.lib(atan87)",
+      "length": 304,
+      "bytes": "803e1c06037513cd35e8f6064607017505cd35f3eb03e8df61c35583ec048bec",
+      "mask": "11000101010011110101101001111011"
+    },
+    {
+      "name": "__@DEXP",
+      "module": "math87s.lib(exp87)",
+      "length": 196,
+      "bytes": "558bec83ec0acd3c9c164022cd397efecd3d8a66ff9e76143c07740acd395ef6",
+      "mask": "11111010111111101011011010101010"
+    },
+    {
+      "name": "IF@DLOG",
+      "module": "math87s.lib(log87)",
+      "length": 80,
+      "bytes": "558bec83ec0ab00acd35e4cd397efecd3d8a66ff9e770ecd395ef68946fee898",
+      "mask": "11111010101011010110110101110001"
+    },
+    {
+      "name": "IF@DLOG10",
+      "module": "math87s.lib(log87)",
+      "length": 110,
+      "bytes": "558bec83ec0ab00bebae558beccd394604e89cff5dc20800558beccd394604e8",
+      "mask": "11111010101111011011101111110110"
+    },
+    {
+      "name": "IF@DSQRT",
+      "module": "math87s.lib(sqrt87)",
+      "length": 54,
+      "bytes": "b003558bec83ec0acd35e4cd397efecd3d8a66ff9e7316cd395ef63c037404cd",
+      "mask": "10111110101011010110110101111100"
+    },
+    {
+      "name": "IF@DPOW",
+      "module": "math87s.lib(pow87)",
+      "length": 365,
+      "bytes": "558bec83ec1acd35e4cd397ef6cd3956e68a66f79e751232c0cd39d8cd395eee",
+      "mask": "11111010101101011011100111011110"
+    },
+    {
+      "name": "floor_",
+      "module": "math87s.lib(floor.c)",
+      "length": 73,
+      "bytes": "5589e55083ec0a8d46f450ff760aff7608ff7606ff7604e88366cd35eecd3ad9",
+      "mask": "11111101101110110110110100101100"
+    },
+    {
+      "name": "ceil_",
+      "module": "math87s.lib(ceil.c)",
+      "length": 34,
+      "bytes": "5589e55053cd39460483ec0889e3cd35e0cd391fcd3de89effcd35e05b585dc2",
+      "mask": "11111101101110010011101001010110"
+    },
+    {
+      "name": "IF@DFMOD",
+      "module": "math87s.lib(fmod87)",
+      "length": 52,
+      "bytes": "558becf6064607017505cd35f8eb03e8236850cd397efecd3d589e7ae6cd39d9",
+      "mask": "11111000101011010011010101110100"
+    },
+    {
+      "name": "__CHP",
+      "module": "math87s.lib(fchop87)",
+      "length": 39,
+      "bytes": "50558bec50cd357efecd3d8b46fec646ff1fcd356efecd35fc8946fecd356efe",
+      "mask": "11111101010110110010111100111100"
+    },
+    {
+      "name": "time_",
+      "module": "clibs.lib(time.c)",
+      "length": 49,
+      "bytes": "5351565589e583ec1289c38d46eee89c6a8d46eee81f6b89c189d685db750b89",
+      "mask": "11111111011110100110100111111100"
+    },
+    {
+      "name": "_localtime_",
+      "module": "clibs.lib(localtim.c)",
+      "length": 106,
+      "bytes": "535156575589e583ec0289c389d6e86570528b3f8b4702ff3676088946fe89fb",
+      "mask": "11111111101111100111110110011011"
+    },
+    {
+      "name": "localtime_",
+      "module": "clibs.lib(localtim.c)",
+      "length": 244,
+      "bytes": "52baee09e88fff5ac35189d1ba0a00e8297501cb0430880788d0043088470159",
+      "mask": "11001001111110010011101111101101"
+    },
+    {
+      "name": "_setjmp_",
+      "module": "clibs.lib(setjmp)",
+      "length": 136,
+      "bytes": "96891c894c02894406897c08896c0a8c440e8954048c5c108f441489640c8c4c",
+      "mask": "11111011011011011011011011011000"
+    },
+    {
+      "name": "segread_",
+      "module": "clibs.lib(segread.c)",
+      "length": 24,
+      "bytes": "5389c38cc88947028cd88947068cc089078cd08947045bc3",
+      "mask": "111111101111011111111011"
+    },
+    {
+      "name": "int86x_",
+      "module": "clibs.lib(intx086.c)",
+      "length": 160,
+      "bytes": "56575589e583ec185089d6895efe894efc8b048946e88b44028946ea8b440489",
+      "mask": "11111110111110110111101101101100"
+    },
+    {
+      "name": "int86_",
+      "module": "clibs.lib(intx086.c)",
+      "length": 30,
+      "bytes": "51565589e583ec0889c68d46f88d4ef8e835ff89f0e848ff89ec5d5e59c3",
+      "mask": "111111101111011010011100111111"
+    },
+    {
+      "name": "intdos_",
+      "module": "clibs.lib(intd086.c)",
+      "length": 87,
+      "bytes": "535156575589e55289c755061e528b058b5d028b4d048b55068b75088b7d0af8",
+      "mask": "11111111111111111101101101101101"
+    },
+    {
+      "name": "intdosx_",
+      "module": "clibs.lib(intdx086.c)",
+      "length": 105,
+      "bytes": "5156575589e55289c75506531e528e078b6f068b058b5d028b4d048b55068b75",
+      "mask": "11111111111111111101111011011000"
+    },
+    {
+      "name": "bdos_",
+      "module": "clibs.lib(bdos.c)",
+      "length": 13,
+      "bytes": "51565788c488d8cd215f5e59c3",
+      "mask": "1111111101111"
+    },
+    {
+      "name": "movedata_",
+      "module": "clibs.lib(movedata.c)",
+      "length": 32,
+      "bytes": "56575589e589cf8b4e088ec389d61e8ed8d1e9f3a513c9f3a41f5d5f5ec20200",
+      "mask": "11111111101111111111111111111100"
+    },
+    {
+      "name": "delay_",
+      "module": "clibs.lib(delay.c)",
+      "length": 367,
+      "bytes": "53515256575589e583ec0a5085c0750989ec5d5f5e5a595bc3b42ccd21bb100e",
+      "mask": "11111111110111101111111111010100"
+    },
+    {
+      "name": "_cstart_",
+      "module": "clibs.lib(cstart)",
+      "length": 426,
+      "bytes": "eb3703002a2a2a204e554c4c2061737369676e6d656e74206465746563746564",
+      "mask": "10111111111111010111111011101100"
+    },
+    {
+      "name": "__exit_",
+      "module": "clibs.lib(cstart)",
+      "length": 29,
+      "bytes": "50ba5a0d8edafc8d3e00008ec2b91000b80101f3af74395bb89c2b8cca",
+      "mask": "11001111100111001001110110011"
+    },
+    {
+      "name": "__do_exit_with_msg_",
+      "module": "clibs.lib(cstart)",
+      "length": 198,
+      "bytes": "bcd00d5350528ccf8edfbacb2bb8013dcd218bd81f5a8bf2fcac84c075fb8bce",
+      "mask": "10011111111001001011111111111011"
+    },
+    {
+      "name": "__GETDS",
+      "module": "clibs.lib(cstart)",
+      "length": 11,
+      "bytes": "50b85a0d8ed858c3cbcb00",
+      "mask": "11001111110"
+    },
+    {
+      "name": "__fatal_runtime_error_",
+      "module": "clibs.lib(xmsg.c)",
+      "length": 40,
+      "bytes": "89c189d6e84a7585c0750789c889f2e91aff89d8e9f8fe5389c388d08b1730e4",
+      "mask": "11111001110111110011100111111111"
+    },
+    {
+      "name": "__fprtf_",
+      "module": "clibs.lib(fprtf.c)",
+      "length": 170,
+      "bytes": "5156575589e583ec0489c689d789da8b5c048b47063d0100740c85c07403e972",
+      "mask": "11111111011111111011010010111000"
+    },
+    {
+      "name": "vsprintf_",
+      "module": "clibs.lib(vsprintf.c)",
+      "length": 2847,
+      "bytes": "515689c6b9f22ee8ac7d01c6c604005e59c3535689c38b470689c64e89770685",
+      "mask": "11111001001111011111111101111100"
+    },
+    {
+      "name": "__scnf_",
+      "module": "clibs.lib(scnf.c)",
+      "length": 458,
+      "bytes": "5156575589e583ec0889c6895ef88956fa31c031ff8946fe8946fc806408fd8b",
+      "mask": "11111111011110110111111011011000"
+    },
+    {
+      "name": "__InitFiles_",
+      "module": "clibs.lib(initfile.c)",
+      "length": 221,
+      "bytes": "5352565780266504f8be4204800e6504048b440685c07508a3e8095f5e5a5bc3",
+      "mask": "11111100010011000110111010011111"
+    },
+    {
+      "name": "__ioalloc_",
+      "module": "clibs.lib(ioalloc.c)",
+      "length": 108,
+      "bytes": "535689c3e82f03837f0a00750c8a4707a8027440c7470a86008b470ae861d58b",
+      "mask": "11111001100101101010110001101000"
+    },
+    {
+      "name": "__flush_",
+      "module": "clibs.lib(flush.c)",
+      "length": 233,
+      "bytes": "53515256575589e583ec0289c6c746fe0000f64407107403e96c008b5c04837f",
+      "mask": "11111111110111100011001010011000"
+    },
+    {
+      "name": "__get_errno_ptr_",
+      "module": "clibs.lib(errno.c)",
+      "length": 455,
+      "bytes": "b8220ac356575589e583ec0a89c68956fc895efa89cfc746f6ffff803c207503",
+      "mask": "10011111111011110110111100011010"
+    },
+    {
+      "name": "_sopen_",
+      "module": "clibs.lib(open.c)",
+      "length": 26,
+      "bytes": "5351525589e58b460a8d4e108b5e0e8b560ce828fe5d5a595bc3",
+      "mask": "11111111011011011010011111"
+    },
+    {
+      "name": "__chktty_",
+      "module": "clibs.lib(chktty.c)",
+      "length": 37,
+      "bytes": "5389c3f647072074025bc38b4708e8377285c074f4804f0720f647070775ea80",
+      "mask": "11111001011110100111011001100100"
+    },
+    {
+      "name": "__freefp_",
+      "module": "clibs.lib(freefp.c)",
+      "length": 36,
+      "bytes": "5356bee6098b1c85db74163b4702740489deebf18b078904a1e809891ee80989",
+      "mask": "11100111110110101110111110011000"
+    },
+    {
+      "name": "__purgefp_",
+      "module": "clibs.lib(freefp.c)",
+      "length": 23,
+      "bytes": "538b1ee80985db75025bc38b07a3e80989d8e822d3ebea",
+      "mask": "11100111011111001110010"
+    },
+    {
+      "name": "__allocfp_",
+      "module": "clibs.lib(allocfp.c)",
+      "length": 126,
+      "bytes": "53515256578b3ee80985ff7514be420481fe5a05734af6440603743483c60eeb",
+      "mask": "11111110011101001100101100101100"
+    },
+    {
+      "name": "__lseek_",
+      "module": "clibs.lib(__lseek.c)",
+      "length": 62,
+      "bytes": "56575589e583ec045089de89c889d38d7efc8b5efa88d089f2b442cd21368905",
+      "mask": "11111110111111111011011111010111"
+    },
+    {
+      "name": "__close_",
+      "module": "clibs.lib(_clse.c)",
+      "length": 41,
+      "bytes": "5351525689c189c3b43ecd2119d231f685d27c0e89c831d2e8fc7089f05e5a59",
+      "mask": "11111111101011111110111110011111"
+    },
+    {
+      "name": "__qread_",
+      "module": "clibs.lib(qread.c)",
+      "length": 22,
+      "bytes": "5189d989c3b43fcd2119d285d27c0259c3e8375e59c3",
+      "mask": "1111110101111101110011"
+    },
+    {
+      "name": "__qwrite_",
+      "module": "clibs.lib(qwrit.c)",
+      "length": 86,
+      "bytes": "5156575589e583ec0289c68956fe89dfe8ae70a8807414b00289f331d231c9b4",
+      "mask": "11111111011110111001010101111110"
+    },
+    {
+      "name": "lseek_",
+      "module": "clibs.lib(lseek.c)",
+      "length": 43,
+      "bytes": "565789c689d7e8627085c97f06751285db760ea880750a80cc8089c289f0e861",
+      "mask": "11111110011101011101010110111100"
+    },
+    {
+      "name": "_tell_",
+      "module": "clibs.lib(tell.c)",
+      "length": 15,
+      "bytes": "5351ba010031db31c9e8f6fe595bc3",
+      "mask": "111001111100111"
+    },
+    {
+      "name": "fflush_",
+      "module": "clibs.lib(fflush.c)",
+      "length": 13,
+      "bytes": "85c07506e8370031c0c3e93efb",
+      "mask": "1110100111100"
+    },
+    {
+      "name": "__flushall_",
+      "module": "clibs.lib(flushall.c)",
+      "length": 49,
+      "bytes": "5351525689c18b36e60931d285f6741a8b5c02854f0675048b34ebf042f64707",
+      "mask": "11111111001111101101101011101000"
+    },
+    {
+      "name": "getche_",
+      "module": "clibs.lib(gtche.c)",
+      "length": 21,
+      "bytes": "a12e06c7062e06000085c07401c3b401cd2130e4c3",
+      "mask": "100110000111011010111"
+    },
+    {
+      "name": "memchr_",
+      "module": "clibs.lib(memchr.c)",
+      "length": 27,
+      "bytes": "515789c789d988d0e30a8cda8ec2f2ae75024fa98bf989f85f59c3",
+      "mask": "111111111011111110110011111"
+    },
+    {
+      "name": "__setbits_",
+      "module": "clibs.lib(setbits.c)",
+      "length": 73,
+      "bytes": "535156575589e55089d6bb200031d2b103e8a1cf8a0484c0741888c3240730ff",
+      "mask": "11111111111001110100111110111011"
+    },
+    {
+      "name": "__MemAllocator",
+      "module": "clibs.lib(mem.c)",
+      "length": 200,
+      "bytes": "5156571e5589e583ec0289dec746fe000085c07503e96c0089c783c70383e7fe",
+      "mask": "11111111101111000111010011110110"
+    },
+    {
+      "name": "__MemFree",
+      "module": "clibs.lib(mem.c)",
+      "length": 378,
+      "bytes": "5156571e5589e583ec0689d1895efe85c07503e9840089c68eda83ee02f60401",
+      "mask": "11111111101111011101001111110110"
+    },
+    {
+      "name": "__nmemneed_",
+      "module": "clibs.lib(nmemneed.c)",
+      "length": 208,
+      "bytes": "31c0c353565789c68b1e5c0531ff85db740e39de720789df8b5f04ebf1897702",
+      "mask": "11111111110011111011101111010110"
+    },
+    {
+      "name": "__ExpandDGROUP_",
+      "module": "clibs.lib(grownear.c)",
+      "length": 212,
+      "bytes": "5356575589e550a10e0985c07409833e2206fe750831c089ec5de972ff8d46fe",
+      "mask": "11111111001110110001011111100110"
+    },
+    {
+      "name": "__U4M",
+      "module": "clibs.lib(i4m)",
+      "length": 24,
+      "bytes": "9350920bc07402f7e2910bc07404f7e303c858f7e303d1c3",
+      "mask": "111111011111101111111111"
+    },
+    {
+      "name": "_nmsize_",
+      "module": "clibs.lib(nmsize.c)",
+      "length": 15,
+      "bytes": "5389c383eb028b0724fe2d02005bc3",
+      "mask": "111110111010011"
+    },
+    {
+      "name": "_nexpand_",
+      "module": "clibs.lib(nexpand.c)",
+      "length": 111,
+      "bytes": "535156575589e583ec0489c68956fe31ff8d4efc8b5efe8cd889f2e8f26c85c0",
+      "mask": "11111111101111011110110111110011"
+    },
+    {
+      "name": "__ZXBuf2LD_",
+      "module": "math87s.lib(zbuf2ld.c)",
+      "length": 252,
+      "bytes": "5589e551565783ec105253c746f41c0089c789c68cd88ec083c9ff33c0f2aef7",
+      "mask": "11111111011110001111111111011110"
+    },
+    {
+      "name": "__ZBuf2LD",
+      "module": "math87s.lib(bufld086)",
+      "length": 473,
+      "bytes": "5556575153528be82bd28bfa8bca8bda8bf28a46003c007449525351578bc603",
+      "mask": "11111111111111111111010101111110"
+    },
+    {
+      "name": "_LDScale10x_",
+      "module": "math87s.lib(ldcvt.c)",
+      "length": 1273,
+      "bytes": "535189c189d381fa00107f1081fa00f07c1689da89c8e848ff595bc3ba0010e8",
+      "mask": "11111111001011001011111001111000"
+    },
+    {
+      "name": "__LDcvt_",
+      "module": "math87s.lib(ldcvt.c)",
+      "length": 1945,
+      "bytes": "5589e551565781ec800089c68956f6895eee50558beccd357e02cd3d5d588946",
+      "mask": "11111111001111011011111010101100"
+    },
+    {
+      "name": "__x87id",
+      "module": "clibs.lib(init8087)",
+      "length": 371,
+      "bytes": "558bec2bc050dbe3d97efe8b46fe32c0b4033866ff75418166fe7fff9bd96efe",
+      "mask": "11111111110110111011010110001110"
+    },
+    {
+      "name": "__int34",
+      "module": "emu87.lib(emu8087.asm)",
+      "length": 61,
+      "bytes": "fb50515253555556571e068bec8cd9fce8f9d58d1edc06895e0a8b47028ac483",
+      "mask": "11111111111111111001100110110110"
+    },
+    {
+      "name": "__int3c",
+      "module": "emu87.lib(emu8087.asm)",
+      "length": 988,
+      "bytes": "fb50515253555556571e068becfce8bed58d1edc06895e0a8b47028ac483e038",
+      "mask": "11111111111111100110011011011110"
+    },
+    {
+      "name": "FIDRQQ",
+      "module": "emu87.lib(initemu.asm)",
+      "length": 9546,
+      "bytes": "3e5917593e59e06017595663e060e0603e59e0603e59e0601759d463e060e060",
+      "mask": "11111110111111101110111011101010"
+    },
+    {
+      "name": "___dos87emucall",
+      "module": "emu87.lib(dosinit.asm)",
+      "length": 62,
+      "bytes": "83f8017509cd37e3cd352e1009c383f802750dcd35eecd35eecd35eecd35eec3",
+      "mask": "11010101010011110101011011011011"
+    },
+    {
+      "name": "_mbterm_",
+      "module": "clibs.lib(mbterm.c)",
+      "length": 38,
+      "bytes": "5389c38a0784c07505b801005bc330e4e83a2d85c0740b807f01007505b80200",
+      "mask": "11111111010011111001110110010100"
+    },
+    {
+      "name": "_mbsnextc_",
+      "module": "clibs.lib(mbsnextc.c)",
+      "length": 29,
+      "bytes": "535289c38a1730f689d0e81a2d85c0740788d68a5f0188da89d05a5bc3",
+      "mask": "11111111111001110111101111111"
+    },
+    {
+      "name": "_mbctoupper_",
+      "module": "clibs.lib(mbcupper.c)",
+      "length": 20,
+      "bytes": "f6c4ff740c813e1209a4037401c3e9c035e92690",
+      "mask": "11010110000101100100"
+    },
+    {
+      "name": "_mbsinc_",
+      "module": "clibs.lib(mbsinc.c)",
+      "length": 30,
+      "bytes": "5389c38a0730e4e8ec2c85c0740d807f0100740783c30289d85bc343ebf9",
+      "mask": "111111110011101100101101111110"
+    },
+    {
+      "name": "__Slash_C_",
+      "module": "clibs.lib(_slashc.c)",
+      "length": 31,
+      "bytes": "5389c384d2740fc6072fc647016389d8c64702005bc3b80037cd218817ebeb",
+      "mask": "1111110110110011110011100101110"
+    },
+    {
+      "name": "spawnlp_",
+      "module": "clibs.lib(splp.c)",
+      "length": 46,
+      "bytes": "53525589e58b46088d5e0c8b560ae87d355d5a5bc30000010000040000070000",
+      "mask": "11111110110110100111111111111111"
+    },
+    {
+      "name": "__fptan_chk",
+      "module": "clibs.lib(chipt16.asm)",
+      "length": 164,
+      "bytes": "555083ec148becdb7e008b460825ff7f0f8482003dff7f747d8b460603c07376",
+      "mask": "11110111101101001100100101101110"
+    },
+    {
+      "name": "__fpatan_wrap",
+      "module": "clibs.lib(chipw16.asm)",
+      "length": 47,
+      "bytes": "505583ec688becdb7e5e9bdd7600db6e0edb6e5ee8a1369bdfe0db7e0e25ff00",
+      "mask": "11110111101110110110100111110100"
+    },
+    {
+      "name": "__math87_err_",
+      "module": "math87s.lib(math87e.c)",
+      "length": 136,
+      "bytes": "5589e550535283ec0a8a460c88c330ff89da80cf813c067536cd35eecd385e04",
+      "mask": "11111111011011111111010101011010"
+    },
+    {
+      "name": "__log_matherr_",
+      "module": "math87s.lib(logmerr.c)",
+      "length": 96,
+      "bytes": "5589e5505283ec028a560c80fa087419f7460aff7f7512837e0800750c837e06",
+      "mask": "11111110110110101100010110010000"
+    },
+    {
+      "name": "__pow87_err_",
+      "module": "math87s.lib(pow87e.c)",
+      "length": 533,
+      "bytes": "5589e550535283ec0a8a461484c0754ccd35eecd385e0ccd397ef8cd3d8b46f8",
+      "mask": "11111111011011101011011011010110"
+    },
+    {
+      "name": "__fdiv_fpr",
+      "module": "clibs.lib(fdiv_patch)",
+      "length": 1488,
+      "bytes": "555383ec2cd1e08bd88bec2effa7ec84dcf883c42c5b5dc383c42c5b5dcd06dc",
+      "mask": "11110111111111001111011111011100"
+    },
+    {
+      "name": "modf_",
+      "module": "math87s.lib(modf87)",
+      "length": 515,
+      "bytes": "558bec538b5e0ccd394604cd35c0e8f199cd38e9cd391f5bcd3d5dc20a000000",
+      "mask": "11111101011010011101001110110011"
+    },
+    {
+      "name": "__fprem_chk",
+      "module": "clibs.lib(chipr16.asm)",
+      "length": 723,
+      "bytes": "525583ec308becdb7e18db7e0033d28b4608a9ff7f7409e845fe83c4305d5ac3",
+      "mask": "11110111101101111010010100110111"
+    },
+    {
+      "name": "__getctime_",
+      "module": "clibs.lib(gtctm.c)",
+      "length": 137,
+      "bytes": "535152565589e583ec0289c3b42acd2181e96c0788c588c830e48956fe89470a",
+      "mask": "11111111101110101100111111110110"
+    },
+    {
+      "name": "mktime_",
+      "module": "clibs.lib(mktime.c)",
+      "length": 1393,
+      "bytes": "535156575589e583ec0a89c68d5efa8d56f6e83d2b8b5efa8b4efc8946fe5631",
+      "mask": "11111111101111011010011011011010"
+    },
+    {
+      "name": "tzset_",
+      "module": "clibs.lib(tzset.c)",
+      "length": 96,
+      "bytes": "52b8d000e8808789c2e8d0ff85c0750485d275025ac389d0e801ff5ac3535156",
+      "mask": "11001001110011101110111110011111"
+    },
+    {
+      "name": "__brktime_",
+      "module": "clibs.lib(gmtime.c)",
+      "length": 602,
+      "bytes": "56575589e5505289de89cf8b56088b460a85c9751f81fbc0a8731985c07f0675",
+      "mask": "11111111111110110111011001011100"
+    },
+    {
+      "name": "__isindst_",
+      "module": "clibs.lib(timeutil.c)",
+      "length": 629,
+      "bytes": "53515256575589e583ec1689c68b441085c07c0589c7e9900031ff833e780800",
+      "mask": "11111111110111101110111001111000"
+    },
+    {
+      "name": "div_",
+      "module": "clibs.lib(div.c)",
+      "length": 9,
+      "bytes": "5189d199f7f959c3c3",
+      "mask": "111111111"
+    },
+    {
+      "name": "_DoINTR_",
+      "module": "clibs.lib(dointr)",
+      "length": 885,
+      "bytes": "9c551e51538ed9e82d001e55538becc55e0689078f4702894f048957068f4708",
+      "mask": "11111111001111111011110110110110"
+    },
+    {
+      "name": "__set_errno_dos_",
+      "module": "clibs.lib(dosret.c)",
+      "length": 79,
+      "bytes": "535289c288c330ff891e400b3d00017338803e260603722b3c507504b00eeb06",
+      "mask": "11111111110010010110001010101010"
+    },
+    {
+      "name": "__set_errno_dos_reterr_",
+      "module": "clibs.lib(dosret.c)",
+      "length": 10,
+      "bytes": "5289c2e8abff89d05ac3",
+      "mask": "1111001111"
+    },
+    {
+      "name": "__CMain",
+      "module": "clibs.lib(cmain086.c)",
+      "length": 64,
+      "bytes": "528b16480ba1460be83060e98f1e53525589e589c3833f00750689ec5d5a5bc3",
+      "mask": "11100100100100111111111010111111"
+    },
+    {
+      "name": "__InitRtns",
+      "module": "clibs.lib(initrtns.c)",
+      "length": 87,
+      "bytes": "53515256575589e589c11ee8e58dbfac0989fabb760989fe88c839fb7316803f",
+      "mask": "11111111111100100111001111111000"
+    },
+    {
+      "name": "__FiniRtns",
+      "module": "clibs.lib(initrtns.c)",
+      "length": 95,
+      "bytes": "535156575589e589c11ee88f8d88d5bfca0989fabbac0989fe88c839fb731680",
+      "mask": "11111111111001110011100111111100"
+    },
+    {
+      "name": "__setEFGfmt_",
+      "module": "clibs.lib(setefg.c)",
+      "length": 69,
+      "bytes": "c706da08babec706dc088fc0c35389c39bdd379b5bc35389c39bdd279b5bc380",
+      "mask": "11000011000011111111111111111110"
+    },
+    {
+      "name": "__init_8087_",
+      "module": "clibs.lib(chk8087.c)",
+      "length": 98,
+      "bytes": "803e1d06007508803e1c060075d4c3c7061809f6a0c7061a09ffa0ebea535152",
+      "mask": "11000101100010111000011000010111"
+    },
+    {
+      "name": "__chk8087_",
+      "module": "clibs.lib(chk8087.c)",
+      "length": 173,
+      "bytes": "803e1c06007419803e200600750dc7063f064ba1c70641060000c3e8f11eebee",
+      "mask": "11000101100010110000110000110010"
+    },
+    {
+      "name": "FIWRQQ",
+      "module": "emu87.lib(initemu.asm)",
+      "length": 267,
+      "bytes": "46fc89058a044184c0744846c60700eba6e95600803c20752884c074d8803c00",
+      "mask": "11111111110111010100110101110110"
+    },
+    {
+      "name": "__Init_Argv_",
+      "module": "clibs.lib(initargv.c)",
+      "length": 49,
+      "bytes": "535152b81c0ab91a0a8b1e43068b16470650a14a0be85dffa33c0aa11a0aa320",
+      "mask": "11110010011001100110010010010000"
+    },
+    {
+      "name": "__EnterWVIDEO_",
+      "module": "clibs.lib(enterdb.c)",
+      "length": 2359,
+      "bytes": "803ed80800750331c0c35250cceb0657564944454fb8010083c404c3535689c6",
+      "mask": "11000101111111011111110011011111"
+    },
+    {
+      "name": "__prtf_",
+      "module": "clibs.lib(prtf.c)",
+      "length": 516,
+      "bytes": "56575589e583ec6a5389cfc646fe00c746e00000c746e2c800c746e800008946",
+      "mask": "11111110111110011000110001100000"
+    },
+    {
+      "name": "isdigit_",
+      "module": "clibs.lib(isdigit.c)",
+      "length": 36,
+      "bytes": "533dffff741a3d80ff7d053dff007f1088c330fff6872702207405b801005bc3",
+      "mask": "11001010010100101111110001010011"
+    },
+    {
+      "name": "isspace_",
+      "module": "clibs.lib(isspace.c)",
+      "length": 36,
+      "bytes": "533dffff741a3d80ff7d053dff007f1088c330fff6872702027405b801005bc3",
+      "mask": "11001010010100101111110001010011"
+    },
+    {
+      "name": "_ismbblead_",
+      "module": "clibs.lib(mbislead.c)",
+      "length": 21,
+      "bytes": "5389c38a9f3f0a80e30130e789d85bc331c0e94e08",
+      "mask": "111110011011111111100"
+    },
+    {
+      "name": "mbtowc_",
+      "module": "clibs.lib(mbtowc.c)",
+      "length": 108,
+      "bytes": "565789c689d785d2741485db74158a1530f685d2751285c07402891431d289d0",
+      "mask": "11111111101110111111101110111111"
+    },
+    {
+      "name": "__I4D",
+      "module": "clibs.lib(i4d)",
+      "length": 73,
+      "bytes": "0bd278160bc97941f7d9f7db83d900e83700f7daf7d883da00c3f7daf7d883da",
+      "mask": "11101110111111010011111101111100"
+    },
+    {
+      "name": "__U4D",
+      "module": "clibs.lib(i4d)",
+      "length": 145,
+      "bytes": "0bc9751a4b7416433bda77098bc88bc22bd2f7f391f7f38bda8bd12bc9c33bca",
+      "mask": "11101101111011111111111111111111"
+    },
+    {
+      "name": "__FDFS",
+      "module": "clibs.lib(fdfs086)",
+      "length": 98,
+      "bytes": "a9f07f743e8af480e68003c913db13c080c52083d30083d000741f3de08f731a",
+      "mask": "10010111101111111101101101010010"
+    },
+    {
+      "name": "__U8M",
+      "module": "clibs.lib(i8m086)",
+      "length": 330,
+      "bytes": "558bec50535152360b44067403e9c000360b5c047553360b4c027515360b1475",
+      "mask": "11111111110101001110101110101110"
+    },
+    {
+      "name": "_dos_open_",
+      "module": "clibs.lib(opendos.c)",
+      "length": 20,
+      "bytes": "5189d189c28ac1b43dcd2172028907e85d1059c3",
+      "mask": "11111111010101110011"
+    },
+    {
+      "name": "__GetIOMode_",
+      "module": "clibs.lib(iomode.c)",
+      "length": 23,
+      "bytes": "533b06de08730c8b1e0809d1e001c38b075bc331c05bc3",
+      "mask": "11100101100111111111111"
+    },
+    {
+      "name": "__SetIOMode_",
+      "module": "clibs.lib(iomode.c)",
+      "length": 21,
+      "bytes": "533b06de0872025bc38b1e0809d1e001c389175bc3",
+      "mask": "111001011110011111111"
+    },
+    {
+      "name": "isatty_",
+      "module": "clibs.lib(isatt.c)",
+      "length": 42,
+      "bytes": "535289c3b80044cd2119db750289d089c285db7f02750aa8807406b801005a5b",
+      "mask": "11111001011101111111010101010011"
+    },
+    {
+      "name": "_dos_creat_",
+      "module": "clibs.lib(creatdos.c)",
+      "length": 166,
+      "bytes": "5189d189c2b43ccd2172028907e8f50f59c35189d189c2b45bcd2172028907e8",
+      "mask": "11111101010111001111111101010110"
+    },
+    {
+      "name": "__SetIOMode_grow_",
+      "module": "clibs.lib(stiomode.c)",
+      "length": 85,
+      "bytes": "53515689c3a1de0839c373243b1ede08732a89d9d1e185d2742789d8e8560f8b",
+      "mask": "11111100111011001011111110111000"
+    },
+    {
+      "name": "__brk_",
+      "module": "clibs.lib(sbrk.c)",
+      "length": 87,
+      "bytes": "53515289c23b062c06723b89d3b10483c30fd3eb8cd885db7503bb0010803e28",
+      "mask": "11111110010111011011111110100000"
+    },
+    {
+      "name": "__HeapManager_expand_",
+      "module": "clibs.lib(_expand.c)",
+      "length": 399,
+      "bytes": "56575589e583ec0c89d6894efc8d570380e2fe39da7369baffff83ee028ec026",
+      "mask": "11111110111101101101110100110110"
+    },
+    {
+      "name": "__LDClass_",
+      "module": "math87s.lib(ldclass.c)",
+      "length": 90,
+      "bytes": "5389c38b470880e47f3dff7f751e817f0600807512837f0400750c8b47020b07",
+      "mask": "11111011010010110001011001011011"
+    },
+    {
+      "name": "__U8LS",
+      "module": "clibs.lib(i8ls086)",
+      "length": 16,
+      "bytes": "85f6740bd1e2d1d1d1d3d1d04e75f5c3",
+      "mask": "1110111111111101"
+    },
+    {
+      "name": "ultoa_",
+      "module": "clibs.lib(ltoa.c)",
+      "length": 83,
+      "bytes": "56575589e583ec245351c646dc008d76dd89df8b5ed8895efe8d5efe33c93b17",
+      "mask": "11111110111100110111101101101111"
+    },
+    {
+      "name": "ltoa_",
+      "module": "clibs.lib(ltoa.c)",
+      "length": 32,
+      "bytes": "5689de83f90a750485d27c07e89eff89f05ec3f7dac6072df7d883da0043ebec",
+      "mask": "11111010111010011111111011110110"
+    },
+    {
+      "name": "__setenvp_",
+      "module": "clibs.lib(setenvp.c)",
+      "length": 165,
+      "bytes": "53515256575589e583ec02833e260a00753abb2c008e06240631f6268b0731d2",
+      "mask": "11111111110110001010011001111111"
+    },
+    {
+      "name": "__freeenvp_",
+      "module": "clibs.lib(setenvp.c)",
+      "length": 135,
+      "bytes": "e8030ca1260a85c07517a1280a85c07408e8925c31c0a3280aa1440b85c0750b",
+      "mask": "10010011101001110100111001001110"
+    },
+    {
+      "name": "__mbinit_",
+      "module": "clibs.lib(mbinit.c)",
+      "length": 100,
+      "bytes": "535289c2e8a6ff83faff743f83fafe743a83fafd744983fafc7526bb1f00ba01",
+      "mask": "11111001101011010110101101010000"
+    },
+    {
+      "name": "__verify_pentium_fdiv_bug_",
+      "module": "clibs.lib(chipbug.c)",
+      "length": 498,
+      "bytes": "5589e583ec12c746f45041c746f27e01c746f000c0c746ee0000c746fc4741c7",
+      "mask": "11111011000110001100011000110000"
+    },
+    {
+      "name": "__fpatan_chk",
+      "module": "clibs.lib(chipa16.asm)",
+      "length": 449,
+      "bytes": "5053525583ec248becdb7e0cdb7e008b5e0603db0f8399018b461203c00f8390",
+      "mask": "11111101111011011011110011011000"
+    },
+    {
+      "name": "__math2err_",
+      "module": "math87s.lib(math2err.c)",
+      "length": 300,
+      "bytes": "5589e551565783ec1c89c189d78b45068946e88b45048946e68b45028946e48b",
+      "mask": "11111111011111101101101101101100"
+    },
+    {
+      "name": "__local_mktime_",
+      "module": "clibs.lib(locmktim.c)",
+      "length": 407,
+      "bytes": "5156575589e583ec0a50525389c38b4708bb0c0099f7fb8b7ef4c746fa9a038b",
+      "mask": "11111111011111110100111110110000"
+    },
+    {
+      "name": "__leapyear_",
+      "module": "clibs.lib(leapyear.c)",
+      "length": 43,
+      "bytes": "53515289c3a803751db9640031d2f7f185d2750b89d8bb9001f7f385d27507b8",
+      "mask": "11111101010011111110111001111100"
+    },
+    {
+      "name": "exit_",
+      "module": "clibs.lib(exit.c)",
+      "length": 43,
+      "bytes": "89c3ff161409baff00b81000e8ebe1ff161409ff16160989d8e9976e89c2ff16",
+      "mask": "11110010010010011001100111001100"
+    },
+    {
+      "name": "_EFG_Format_",
+      "module": "math87s.lib(efgfmt.c)",
+      "length": 326,
+      "bytes": "5589e551565783ec2a89c189d6895ef88b7ef88b5f08c746d20100c746d40000",
+      "mask": "11111111011111101101101100011000"
+    },
+    {
+      "name": "FJCRQQ",
+      "module": "emu87.lib(initemu.asm)",
+      "length": 143,
+      "bytes": "d48000ebc8eb75b87000e901fff646d4807406b84500e9f5feb86500e9effe83",
+      "mask": "10111110101001100101001001001000"
+    },
+    {
+      "name": "__cnvs2d_",
+      "module": "math87s.lib(cnvs2d.c)",
+      "length": 16,
+      "bytes": "5389d331d2e8ad58cd391fcd3d5bc3c3",
+      "mask": "1111110010110111"
+    },
+    {
+      "name": "__GrabFP87_",
+      "module": "clibs.lib(grabfp87.c)",
+      "length": 19,
+      "bytes": "813e160963c67501c3e88105c706160963c6c3",
+      "mask": "1100001011001100001"
+    },
+    {
+      "name": "wctomb_",
+      "module": "clibs.lib(wctomb.c)",
+      "length": 98,
+      "bytes": "5389c385c0740df6c6ff740a8837b802008857015bc3b8010088175bc3515657",
+      "mask": "11111101101011100110111001111111"
+    },
+    {
+      "name": "itoa_",
+      "module": "clibs.lib(itoa.c)",
+      "length": 27,
+      "bytes": "5689d683fb0a750485c07c07e8acff89f05ec3f7d842c6042debf1",
+      "mask": "111110101110100111111111010"
+    },
+    {
+      "name": "ulltoa_",
+      "module": "clibs.lib(lltoa.c)",
+      "length": 279,
+      "bytes": "56575589e583ec48538b76088976fc8d76b9c646b8008976fe8b760a8b5eb689",
+      "mask": "11111110111011011011001101101100"
+    },
+    {
+      "name": "_strupr_",
+      "module": "clibs.lib(strupr.c)",
+      "length": 44,
+      "bytes": "535289c289c38a0784c0740f2c613c19760343ebf104418807ebf789d05a5bc3",
+      "mask": "11111111111010101011010111011111"
+    },
+    {
+      "name": "_dos_commit_",
+      "module": "clibs.lib(filedos.c)",
+      "length": 14,
+      "bytes": "5389c3b468f8cd21e803005bc300",
+      "mask": "11110110100110"
+    },
+    {
+      "name": "__doserror_",
+      "module": "clibs.lib(doserror)",
+      "length": 22,
+      "bytes": "730750e813dd58eb022bc0c37305e808ddeb022bc0c3",
+      "mask": "1011001101111010010111"
+    },
+    {
+      "name": "__ChkTTYIOMode_",
+      "module": "clibs.lib(iomodtty.c)",
+      "length": 50,
+      "bytes": "53523d05007d1089c28b1e0809d1e201d3f647014074035a5bc3804f0140e89a",
+      "mask": "11100101111001111110010111110000"
+    },
+    {
+      "name": "_bfree_",
+      "module": "clibs.lib(bfree.c)",
+      "length": 33,
+      "bytes": "535189c189d083faff74098cda39d17506e8ad50595bc389ca31dbe89280595b",
+      "mask": "11111111010111110100111111110011"
+    },
+    {
+      "name": "clearenv_",
+      "module": "clibs.lib(clearenv.c)",
+      "length": 157,
+      "bytes": "535152565731ff833e260a00744031c931d2a1260a89c301d3833f0074188b36",
+      "mask": "11111111100010111110011111101000"
+    },
+    {
+      "name": "dos_get_dbcs_lead_table_",
+      "module": "clibs.lib(getltdos.c)",
+      "length": 41,
+      "bytes": "53515657551e33c08ed8b463cd218cdf720884c0750485ff750433ff33f61f5d",
+      "mask": "11111111111010111011101110111111"
+    },
+    {
+      "name": "dos_get_code_page_",
+      "module": "clibs.lib(getcpdos.c)",
+      "length": 16,
+      "bytes": "5352b80166cd21730233db89d85a5bc3",
+      "mask": "1110010101111111"
+    },
+    {
+      "name": "spawnvpe_",
+      "module": "clibs.lib(spvpe.c)",
+      "length": 310,
+      "bytes": "50b8a400e835405856575589e581ec9a005081ed800089d6895e7e894e7ae89b",
+      "mask": "11001001111111100111001111011000"
+    },
+    {
+      "name": "__rtmathfuncname_",
+      "module": "math87s.lib(_matherr.c)",
+      "length": 171,
+      "bytes": "5389c3d1e38b8702045bc3535289c3833e1e090075198b57028b07e8adff833f",
+      "mask": "11111110011111111000101101110000"
+    },
+    {
+      "name": "__reporterror_",
+      "module": "math87s.lib(_matherr.c)",
+      "length": 131,
+      "bytes": "5589e5535183ec1c89c389d1e891ff31d2833e1e09007407f6063a0904750b89",
+      "mask": "11111110111110011110001011000100"
+    },
+    {
+      "name": "__Init_FPE_handler_",
+      "module": "clibs.lib(fpe87)",
+      "length": 55,
+      "bytes": "2e833e2ac600752e803e1c06007427555053521e06b435b002cd212e891e28c6",
+      "mask": "11100010110001011111110101011100"
+    },
+    {
+      "name": "__Fini_FPE_handler_",
+      "module": "clibs.lib(fpe87)",
+      "length": 792,
+      "bytes": "2e833e2ac600742d50521e5583ec028bec9bd97e009bc646007fd96e009b83c4",
+      "mask": "11100010111111011111011100110100"
+    },
+    {
+      "name": "spawnve_",
+      "module": "clibs.lib(spve.c)",
+      "length": 778,
+      "bytes": "50b89c00e8793a5856575589e581ec84005081ed800089d7895e7889cac6467c",
+      "mask": "11001001111111100111001111011000"
+    },
+    {
+      "name": "__get_std_stream_",
+      "module": "clibs.lib(iobaddr.c)",
+      "length": 89,
+      "bytes": "515289c231c083fa05730dd1e2b10389d0d3e029d00542045a59c3575589e583",
+      "mask": "11111111010111011111110011111110"
+    },
+    {
+      "name": "feraiseexcept_",
+      "module": "clibs.lib(fenv.c)",
+      "length": 309,
+      "bytes": "575589e583ec0e8d7ef230e49bd935243f8d7ef20946f49bd9259b30c0ebbd57",
+      "mask": "11111101101111110110110111111101"
+    },
+    {
+      "name": "_dos_findfirst_",
+      "module": "clibs.lib(finddos.c)",
+      "length": 64,
+      "bytes": "5189d189da89c3b41acd218bd3b44ecd21e856f459c35289c2b41acd21b44fcd",
+      "mask": "11111111010111010100111111010100"
+    },
+    {
+      "name": "__cenvarg_",
+      "module": "clibs.lib(cenvarg.c)",
+      "length": 306,
+      "bytes": "56575589e55050535185d275048b16260a31f685d2741289d38b0785c0740ae8",
+      "mask": "11111111111101100111110111111100"
+    },
+    {
+      "name": "__ccmdline_",
+      "module": "clibs.lib(cenvarg.c)",
+      "length": 84,
+      "bytes": "56575589e55089d6895efe85c9750143833c0074214646833c00741a89d88b14",
+      "mask": "11111111110111011101011110101111"
+    },
+    {
+      "name": "___dospawn",
+      "module": "clibs.lib(dospawn)",
+      "length": 228,
+      "bytes": "558bec5657525153061e8cd08ed88b460aa35c098b4608a35e098c1e60098c1e",
+      "mask": "11111111111111110100110100110000"
+    },
+    {
+      "name": "stackavail_",
+      "module": "clibs.lib(stack086.c)",
+      "length": 85,
+      "bytes": "5589e589e02b062a0689ec5dc3565789d689df85c0743989c3891789ca29fa81",
+      "mask": "11111110011111111111110111111110"
+    },
+    {
+      "name": "_splitpath2_",
+      "module": "clibs.lib(split2.c)",
+      "length": 257,
+      "bytes": "56575589e583ec0689c68956fc89df894efe89c38a043c2f75398a44013c2f75",
+      "mask": "11111110111101111011111010110100"
+    },
+    {
+      "name": "_dos_allocmem_",
+      "module": "clibs.lib(dosmem)",
+      "length": 26,
+      "bytes": "53528bd8b448cd2187d372068bd02bc0eb03e851f089175a5bc3",
+      "mask": "11111010111011111010011111"
+    },
+    {
+      "name": "_dos_freemem_",
+      "module": "clibs.lib(dosmem)",
+      "length": 34,
+      "bytes": "068ec0b449cd21e842f007c306538ec28bd8b44acd218bd35b73028917e82cf0",
+      "mask": "11110101001111111110101111011100"
+    },
+    {
+      "name": "_fmemcpy_",
+      "module": "clibs.lib(fmemcpy.c)",
+      "length": 63,
+      "bytes": "56575589e589c78b460889de8ec21e57918ed8d1e9f3a513c9f3a45f1f89f85d",
+      "mask": "11111111101111111111111111111111"
+    },
+    {
+      "name": "_makepath_",
+      "module": "clibs.lib(makepath.c)",
+      "length": 333,
+      "bytes": "56575589e583ec0489c689d7895efe89cbc746fc000089c185d2741e8a0584c0",
+      "mask": "11111110111111011110001111101111"
+    },
+    {
+      "name": "_stricmp_",
+      "module": "clibs.lib(stricmp.c)",
+      "length": 58,
+      "bytes": "535689c389d68a07433c4172063c5a770204208a244680fc41720880fc5a7703",
+      "mask": "11111111110101010101111101011010"
+    },
+    {
+      "name": "spawnl_",
+      "module": "clibs.lib(spl.c)",
+      "length": 27,
+      "bytes": "5351525589e58b460a8d5e0e8b560c8b0e260ae849f55d5a595bc3",
+      "mask": "111111110110110110010011111"
+    },
+    {
+      "name": "_mbsnccnt_",
+      "module": "clibs.lib(mbsnccnt.c)",
+      "length": 40,
+      "bytes": "535189c331c989d8e878ad85c0750485d2770589c8595bc389d8e88c0039c272",
+      "mask": "11111111100111011101111111100110"
+    },
+    {
+      "name": "_mbsncpy_",
+      "module": "clibs.lib(mbsncpy.c)",
+      "length": 28,
+      "bytes": "515689c189d689da89f0e80f0089c389f24389c8e8df0089c85e59c3",
+      "mask": "1111111111100111111110011111"
+    },
+    {
+      "name": "_mbsnbcnt_",
+      "module": "clibs.lib(mbsnbcnt.c)",
+      "length": 80,
+      "bytes": "53515589e583ec0289c389d131d289d8e82cad85c0750485c9770889d089ec5d",
+      "mask": "11111110111111111001110111011111"
+    },
+    {
+      "name": "_mbvtop_",
+      "module": "clibs.lib(mbconv.c)",
+      "length": 21,
+      "bytes": "5389d3f6c4ff7409882788470189d85bc38807ebf8",
+      "mask": "111110101111011111110"
+    },
+    {
+      "name": "_mbclen_",
+      "module": "clibs.lib(mbclen.c)",
+      "length": 24,
+      "bytes": "5389c38a0730e4e81dda85c07405b802005bc3b801005bc3",
+      "mask": "111111110011101001110011"
+    },
+    {
+      "name": "_mbsdec_",
+      "module": "clibs.lib(mbsdec.c)",
+      "length": 93,
+      "bytes": "53515589e583ec0289c139d0720831c089ec5d595bc389d34b8a07c646ff0088",
+      "mask": "11111110111110111111111111111000"
+    },
+    {
+      "name": "_mbsnbcpy_",
+      "module": "clibs.lib(mbsnbcpy.c)",
+      "length": 32,
+      "bytes": "51565789c189d689c785db76068a0484c07523803c00741439cf76108a44ff30",
+      "mask": "11111111111101111101101011101100"
+    }
+  ]
+}

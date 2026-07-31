@@ -1,0 +1,27 @@
+# Machine-specific tool locations. Copy env.example.ps1 to env.ps1 and edit.
+env.ps1
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Working output: Ghidra projects, decompiled C, rebuilt binaries. All of it is
+# reproducible from the scripts here, and none of it belongs in the repository.
+work/
+out/
+decompile-*/
+*.log
+
+# Nothing from a target game or a period toolchain goes in the repository.
+# Signature databases (masked byte fingerprints) are fine; the libraries they
+# came from are not.
+*.exe
+*.EXE
+*.obj
+*.OBJ
+*.lib
+*.LIB
+*.img
+*.IMG
+*.map
+*.MAP
