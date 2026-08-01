@@ -216,8 +216,18 @@ program — and lists the units, because **every TP unit is its own code segment
 and every call between units is a far call with a literal segment word**. One
 linear scan gives up the module structure of a 200 KB program.
 
-It does not identify the *version*: the runtime error format is identical from
-4.0 to 6.0. See `knowledge/02-compiler-fingerprints.md`.
+For the *version*, give it Borland's own runtime libraries — no string tells
+you, because the runtime error format is identical from 4.0 to 6.0, but the
+runtime's code does:
+
+```
+python tools/tpscan.py unpacked.exe --tpl <5.0>/TURBO.TPL --tpl <5.5>/TURBO.TPL
+```
+
+It ranks them by the longest run of identical code and **refuses to answer**
+unless one wins by half again, because any two Turbo Pascal runtimes have a lot
+in common. Both libraries are on the Internet Archive; `fatextract.py` opens the
+floppy images. See `knowledge/02-compiler-fingerprints.md`.
 
 ---
 

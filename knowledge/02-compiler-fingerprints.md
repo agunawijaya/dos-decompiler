@@ -186,10 +186,52 @@ package's standard for believing one:
 * the six far calls at the entry point, which are Turbo Pascal's chain of unit
   initialisers, all land on segments the scan found independently.
 
-### What this does not do
+### Identifying the version, which needs Borland's own library
 
-**It does not identify the version.** The runtime error message format is
-identical across 4.0, 5.0, 5.5 and 6.0, and nothing short of a reference build
-separates them. That is the same shape of problem `libscan.py` solves for C —
-match against the compiler's own files — and it needs `.TPU` files that were
-not available here. Stated as an open problem rather than guessed at.
+This section previously said the version could not be determined and left it as
+an open problem. **It is determinable, and the answer for Oregon Trail was not
+the one assumed here.**
+
+The runtime error message format really is identical across 4.0, 5.0, 5.5 and
+6.0, so no string separates them. What does is the runtime's *code*, compared
+against `TURBO.TPL` — the library of compiled standard units that ships with
+each version. `tpscan.py --tpl` does it.
+
+It needed a different technique from `libscan.py`. For C, `libscan` matches OMF
+modules with their FIXUPP relocation slots wildcarded, because the OMF records
+say where the relocations are. A `.TPL` carries no such map, and Turbo Pascal
+**smart-links**: unused procedures are dropped and everything after them
+shifts. So neither alignment nor whole-module comparison survives contact.
+
+Coverage does. Take every run of sixteen bytes or more from the linked runtime
+segment that occurs anywhere in the library, and measure what fraction of the
+segment they cover, plus the longest single run. Relocated words break a run
+but only locally; smart-linked gaps cost nothing, because each surviving block
+is found on its own.
+
+Measured on The Oregon Trail's 6,800-byte runtime segment:
+
+| library | signature | covered | longest run |
+|---|---|---|---|
+| **Turbo Pascal 5.0** | `TPU5` | **86%** | **1,587 bytes** |
+| Turbo Pascal 5.5 | `TPU6` | 74% | 545 bytes |
+| `TPC.EXE` — right product, wrong file | — | 2% | — |
+| Zaxxon — not Pascal at all | — | 0% | — |
+
+A 1,587-byte unbroken identical run is not a coincidence, and the program is
+5.0. The four-byte signature at the head of a `.TPL` (`TPU5`, `TPU6`) names the
+format version and is worth reading, but it describes the *library* you are
+holding, not the program you are examining.
+
+**The controls are the argument, not the top row.** Any two Turbo Pascal
+runtimes share a great deal — 5.0 and 5.5 cover only 62% of each other, which
+is enough difference for the comparison to mean something but not so much that
+one library alone would settle it. So the tool refuses to name a version unless
+the best longest-run beats the runner-up by half again, and given a single
+library it declines outright and says why. A version identification from one
+reference file is the kind of confident wrong answer this package exists to
+avoid.
+
+Both libraries came from the Internet Archive — 5.5 from Embarcadero's own
+Antique Software release, 5.0 from a floppy image set that `fatextract.py`
+opened directly. Point `--tpl` at as many as you can find.
