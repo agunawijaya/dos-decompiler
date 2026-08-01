@@ -115,6 +115,18 @@ EXPECTATIONS = {
          "mov dl, 0x41",                       # inside the first routine
          "mov dl, 0x42"],                      # inside the second
     ),
+    # An MZ that is really a .COM wearing a header: one segment, an entry stub
+    # that sets the segment registers once. comrec must strip the header and
+    # reconstruct the *image*. Getting that wrong is silent -- treating the
+    # header as code still rebuilds the file exactly and still prints
+    # BYTE-IDENTICAL -- so the needle is an address. L_00002 can only appear if
+    # the entry came from CS:IP with the header already off.
+    "mzsingle": (
+        60.0,
+        ["MZ, 512-byte header stripped",       # reported, from comrec's output
+         "L_00002:",                           # the entry, addressed from 0
+         "int 0x21"],
+    ),
     # An indirect jump ends recursive descent. Both hidden states are reachable
     # only through the pointer, and the second only after the first has been
     # reached -- so finding `mov dl, 0x42` proves the detection iterated rather
@@ -169,6 +181,13 @@ def run_case(nasm, name, workdir):
     # Rebuild independently rather than trusting comrec's own account of it.
     rebuilt = workdir / f"{name}.rebuilt.com"
     nasm_build(nasm, asm, rebuilt)
+    # For an MZ, the source covers the load image and comrec writes the header
+    # out beside it. Reattaching it here is the whole claim: the artefact
+    # compared has to be the file the user handed over, not the part of it that
+    # happened to be convenient.
+    header = asm.with_suffix(".mzheader")
+    if header.exists():
+        rebuilt.write_bytes(header.read_bytes() + rebuilt.read_bytes())
     if sha(rebuilt) != sha(original):
         return False, "rebuilt file differs from the original"
 

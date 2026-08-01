@@ -13,6 +13,76 @@ hide.
 The tool is `tools/comrec.py`. The rest of this page is why it works and where
 it stops.
 
+## Some MZ executables belong on this route, not the other one
+
+The `.COM` route is described here as the route for `.COM` files, and that was
+too narrow. What it actually needs is not a file format but a property:
+
+> **the program is addressed from one base and does not really use segments.**
+
+Plenty of MZ executables have that property. They were written in assembly,
+they set `DS` and `SS` once in an entry stub, and the only reason they are MZ
+rather than `.COM` is that they are larger than 64 KB of file. For those, the
+MZ pipeline is strictly weaker — it reaches "readable, probably right", while
+this route reaches a rebuild that is byte-identical and says so.
+
+**Karateka (1984)** is the case that established it. 87,990 bytes, four
+relocations, 0.4 stack frames per KB, and an entry stub that reads:
+
+```nasm
+    cli
+    mov ax, 0x6ca
+    mov ds, ax              ; DS = image + 0x6CA0, and that is the last word
+    mov ax, 0x155c          ; on the subject of segments
+    mov ss, ax
+    mov sp, 0x80
+    sti
+```
+
+Strip the 512-byte header, treat the image as a `.COM` with base 0, take the
+entry from `CS:IP`, and it reconstructs:
+
+```
+instructions : 9,740 disassembled (918 pinned)
+code region  : 0x0000..0x6C9D  (27,805 bytes)
+  recovered  : 23,628 bytes as instructions (85.0% of the code region)
+BYTE-IDENTICAL
+```
+
+The code region the tool found ends at `0x6C9D`. The entry stub sets `DS` to
+`image + 0x6CA0`. Those are the same boundary, found twice by different means —
+which is the toolkit's own standard for believing a claim.
+
+`comrec.py` now does the stripping itself, so this is one command on the `.EXE`.
+It writes the header out beside the source, because **the claim has to be about
+the file the user handed over**:
+
+```
+nasm -f bin -o image.bin karateka.asm
+cat karateka.mzheader image.bin > rebuilt.exe
+```
+
+SHA-256 of `rebuilt.exe` equals the shipped `KARATEKA.EXE`, 87,990 bytes.
+
+### When not to
+
+The test is `relocations <= 8`, deliberately narrow, because being wrong here is
+silent. A program that really moves between segments will still assemble and
+still rebuild exactly; it will simply be wrong about every address, and nothing
+will say so.
+
+### A bug worth keeping on the record
+
+The first version of this passed the *path* to the reconstructor and the
+stripped image to nothing. So it reconstructed the whole file, header included,
+as though the header were code — and it **printed `BYTE-IDENTICAL`**, because it
+faithfully rebuilt what it was given.
+
+The output was wrong about every address in the program by 512 bytes, and the
+only reason it was caught is that the rebuilt file came out 512 bytes too long.
+The fixture's needle is therefore an address, `L_00002`, which can only appear
+if the header came off before the walk started.
+
 ## Why .COM is the easy case
 
 A `.COM` file has no header. The whole file is the image, DOS loads it at
