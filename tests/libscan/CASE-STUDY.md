@@ -22,13 +22,10 @@ An OMF `.LIB` does not require the guess. Each module carries FIXUPP records
 that state, exactly, which bytes the linker will overwrite with addresses.
 Blank those and the signature is exact. Two further things fall out:
 
-- **MODEND.** Exactly one module in a C runtime — the startup module — sets the
-  "start address" flag in its MODEND record and names a segment and a
-  displacement. That is the entry point, as a field, not an inference. Checked
-  across the three libraries here: `CRT0` alone out of 302 modules in MS C 5.0,
-  `dos\crt0.asm` alone out of 303 in MS C 5.1, `cstart` alone out of 1,218 in
-  Open Watcom. So the flag also *finds* the startup module, without needing to
-  know its name.
+- **MODEND.** The startup module sets a "start address" flag in its MODEND
+  record and names a segment and a displacement. That is the entry point, as a
+  field, not an inference. Read correctly on four compiler generations, the
+  earliest 1983: Microsoft C 1.04, 5.0 and 5.1, and Open Watcom.
 - **PUBDEF.** Every module lists its public symbols and their offsets, so a
   match does not just say "runtime code here", it says `_strncmp`.
 
@@ -71,6 +68,41 @@ The CONTRAP row is a real case rather than a constructed one: that binary was
 built with Microsoft C 1.04, whose library we do not have, so the correct
 output is exactly what the tool produced.
 
+## The heuristic that did not survive contact with 1983
+
+This case study first claimed something stronger, and it was wrong:
+
+> Exactly one module sets the start-address flag in each library checked, so
+> the flag also *finds* the startup module without needing to know its name.
+
+True for MS C 5.0 (`CRT0`, 1 of 302), MS C 5.1 (`dos\crt0.asm`, 1 of 303) and
+Open Watcom (`cstart`, 1 of 1,218) — and false for **Microsoft C 1.04**, where
+the count is **zero of 75**. Its startup code is not in `MC.LIB` at all: it
+ships as a loose `C.OBJ` that the link line names ahead of the library.
+Reported by the agent who reconstructed CONTRAP, who has that compiler and
+checked.
+
+The failure mode is what makes it worth a section. A scanner handed only the
+archive finds no start-address module and, if it reports that as "entry point
+not recovered", has made a claim about the *binary* on the basis of what the
+*caller passed in*. Two fixes:
+
+- `--lib` accepts a directory and reads every `.LIB` and `.OBJ` in it. On MS C
+  1.04 the startup object sits beside `MC.LIB`, so this costs one directory
+  listing. It is now the recommended form — on MS C 5.0 it also found 2 more
+  modules and 3 more names than the single archive.
+- "Nothing loaded declares a start address" and "the startup module declared
+  one but did not match" are reported as different outcomes, in different
+  words.
+
+The layout is reproduced in the regression test with Open Watcom, by extracting
+`cstart` from `clibs.lib` — so the case is tested, not merely described, by
+anyone with the free toolchain.
+
+`[inferred]`, from them: early Lattice C and other pre-1985 toolchains probably
+share the layout, since separating crt0 from the library is what makes it
+replaceable. One compiler is the whole basis for that.
+
 ## What it got wrong first, and what that taught
 
 MSC 5.0's `flushall.c` and `closeall.c` have byte-identical code segments.
@@ -95,17 +127,22 @@ python tests/libscan/regress.py --watcom C:\Applications\watcom-snap
 ```
 
 It compiles a small program, links it, scans the result against the library it
-was linked with, and asserts the recovered entry point equals the header's —
-then scans the same binary against a different compiler's library and asserts
-that nothing is found. With `MSC_HOME` set it runs the second check against
-Microsoft C as well.
+was linked with, and asserts the recovered entry point equals the header's. It
+then takes the startup module out of the archive to reproduce the MS C 1.04
+layout, and asserts that the archive alone reports *no start address declared*
+rather than *no entry point*, and that adding the loose object — or just naming
+the directory — recovers it exactly. With `MSC_HOME` set it also scans against
+a different compiler's library and asserts nothing is found.
 
 ```
 built probe.exe with Open Watcom, small model
-  Watcom binary vs the Watcom library       47 modules, entry 0x00312 vs header 0x00312   PASS
-  Watcom binary vs the Microsoft library     0 modules, entry none                        PASS
+  archive holding its own startup module     47 modules, entry 0x00312 vs header 0x00312   PASS
+  archive with the startup module removed    46 modules, 0 declaring a start address       PASS
+  ...plus the startup object, loose          47 modules, entry 0x00312 vs header 0x00312   PASS
+  ...or just the directory holding both      47 modules, entry 0x00312 vs header 0x00312   PASS
+  the wrong compiler's library entirely       0 modules, entry none                        PASS
 
-PASS  2/2 checks
+PASS  5/5 checks
 ```
 
 ## Where this changes the workflow
@@ -124,6 +161,8 @@ The limits are worth stating plainly:
 
 - It needs the actual library archive. No archive, no matches — this does not
   identify a compiler it has never been given.
+- The startup object is not always in the archive. Point `--lib` at the
+  directory, not the `.LIB`.
 - It matches code segments only. Data segments are frequently all zero or all
   pointers, and match everywhere.
 - ALIAS records are not followed, so a symbol the linker bound by alias appears

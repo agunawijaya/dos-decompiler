@@ -8,9 +8,17 @@ records -- without ever reading the header. So the test builds a program with a
 known toolchain, hides nothing and asserts nothing about the contents, and only
 asks whether the recovered offset equals the header's.
 
-It also checks the failure mode, which matters more than the success: scanning
-the same binary against a *different* compiler's library must find nothing.
-A tool that guesses when it does not know is worse than one that says nothing.
+It also checks the failure modes, which matter more than the success:
+
+* Scanning against a *different* compiler's library must find nothing. A tool
+  that guesses when it does not know is worse than one that says nothing.
+* When the startup code ships **outside** the archive, the scan must say so
+  rather than report "no entry point" as if that were a fact about the binary.
+  Microsoft C 1.04 is the real case -- its startup is a loose `C.OBJ` named on
+  the link line ahead of `MC.LIB`, and none of the archive's 75 modules
+  declares a start address. That layout is reproduced here with Open Watcom by
+  extracting `cstart` from `clibs.lib`, so the case is tested rather than
+  merely described.
 
 Needs Open Watcom (free): set WATCOM, or pass --watcom. Microsoft C is used
 for a second toolchain if MSC_HOME points at it, and skipped if not.
@@ -87,27 +95,68 @@ def build_watcom(watcom, work):
     return work / "probe.exe", Path(watcom) / "lib286" / "dos" / "clibs.lib"
 
 
-def run_case(name, exe, libs, expect_match):
+def split_startup(watcom, work):
+    """A library with its startup module removed, plus that module loose.
+
+    This is Microsoft C 1.04's layout, built out of Open Watcom so that anyone
+    can run the test: the archive alone must not silently answer "no entry
+    point", and the archive plus the loose object must answer correctly.
+    """
+    wlib = None
+    for b in ("binnt64", "binnt"):
+        p = Path(watcom) / b / "wlib.exe"
+        if p.exists():
+            wlib = str(p)
+            break
+    if wlib is None:
+        return None, None
+    split = work / "split"
+    split.mkdir(exist_ok=True)
+    lib = split / "clibs.lib"
+    shutil.copyfile(Path(watcom) / "lib286" / "dos" / "clibs.lib", lib)
+    for op in ("*cstart", "-cstart"):        # extract, then delete
+        r = subprocess.run([wlib, "-q", "clibs.lib", op],
+                           cwd=split, capture_output=True, text=True)
+        if r.returncode:
+            raise RuntimeError(f"wlib {op} failed: {r.stdout}{r.stderr}")
+    obj = split / "cstart.obj"
+    if not obj.exists():
+        raise RuntimeError("wlib did not produce cstart.obj")
+    return lib, obj
+
+
+def run_case(name, exe, libs, expect, expect_startup=None):
+    """expect: 'entry' | 'nothing' | 'no-startup'."""
     data = Path(exe).read_bytes()
     hdr = libscan.mz_header_size(data) or 0
     image = data[hdr:]
     mods = []
     for lib in libs:
-        mods += libscan.read_library(lib)
+        mods += libscan.read_source(lib)
     hits, ambiguous, entry, collisions = libscan.scan(image, mods)
     truth, _ = header_entry(exe)
+    declared = [m.name for m in mods if m.start is not None]
 
-    if not expect_match:
+    if expect == "nothing":
         ok = not hits and entry is None
-        print(f"  {name:<46} {len(hits)} modules, "
-              f"entry {'none' if entry is None else hex(entry['file_offset'])}"
-              f"   {'PASS' if ok else 'FAIL'}")
-        return ok
+        detail = (f"{len(hits)} modules, "
+                  f"entry {'none' if entry is None else hex(entry['file_offset'])}")
+    elif expect == "no-startup":
+        # The point is the diagnosis, not just the absence: the runtime was
+        # found, and nothing loaded declares a start address. Reporting that as
+        # "no entry point" would be a claim about the binary rather than about
+        # what the caller passed in.
+        ok = bool(hits) and entry is None and not declared
+        detail = (f"{len(hits)} modules, {len(declared)} declaring a start "
+                  f"address, entry {'none' if entry is None else 'RECOVERED'}")
+    else:
+        ok = entry is not None and entry["file_offset"] == truth
+        got = "not recovered" if entry is None else f"0x{entry['file_offset']:05X}"
+        detail = f"{len(hits)} modules, entry {got} vs header 0x{truth:05X}"
 
-    ok = entry is not None and entry["file_offset"] == truth
-    got = "not recovered" if entry is None else f"0x{entry['file_offset']:05X}"
-    print(f"  {name:<46} {len(hits)} modules, entry {got} "
-          f"vs header 0x{truth:05X}   {'PASS' if ok else 'FAIL'}")
+    if expect_startup is not None:
+        ok = ok and declared == expect_startup
+    print(f"  {name:<52} {detail}   {'PASS' if ok else 'FAIL'}")
     return ok
 
 
@@ -126,8 +175,19 @@ def main():
     try:
         exe, clibs = build_watcom(args.watcom, work)
         print(f"built {exe.name} with Open Watcom, small model")
-        results = [run_case("Watcom binary vs the Watcom library",
-                            exe, [clibs], True)]
+        results = [run_case("archive holding its own startup module",
+                            exe, [clibs], "entry", ["cstart"])]
+
+        stripped, loose = split_startup(args.watcom, work)
+        if stripped:
+            results.append(run_case("archive with the startup module removed",
+                                    exe, [stripped], "no-startup", []))
+            results.append(run_case("...plus the startup object, loose",
+                                    exe, [stripped, loose], "entry", ["cstart"]))
+            results.append(run_case("...or just the directory holding both",
+                                    exe, [stripped.parent], "entry", ["cstart"]))
+        else:
+            print("  (wlib not found; the loose-startup checks were skipped)")
 
         msc_lib = None
         if args.msc:
@@ -137,8 +197,8 @@ def main():
                     msc_lib = p
                     break
         if msc_lib:
-            results.append(run_case("Watcom binary vs the Microsoft library",
-                                    exe, [msc_lib], False))
+            results.append(run_case("the wrong compiler's library entirely",
+                                    exe, [msc_lib], "nothing"))
         else:
             print("  (Microsoft C not configured; wrong-library check skipped)")
 

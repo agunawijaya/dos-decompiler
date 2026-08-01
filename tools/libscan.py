@@ -44,16 +44,28 @@ Note the entry point is *read*, not assumed. The MODEND record names a segment
 and a displacement; the CONTRAP agent inferred "offset 0 of the startup
 module's code segment" from one compiler, and for Microsoft C 5.0 that is
 indeed what the record says -- but it is a field, so there is no need to
-assume it. Exactly one module sets the flag in each library checked (CRT0 out
-of 302 in MS C 5.0, dos\\crt0.asm out of 303 in MS C 5.1, cstart out of 1,218
-in Open Watcom), so it identifies the startup module as well as locating the
-entry point inside it.
+assume it. It has been read correctly on four compiler generations, the
+earliest 1983: Microsoft C 1.04, 5.0 and 5.1, and Open Watcom.
+
+**Do not assume the startup module is in the archive.** In MS C 5.0, 5.1 and
+Open Watcom exactly one module sets the start-address flag, so the flag finds
+the startup module as well as locating the entry point inside it. In Microsoft
+C 1.04 *no* module does, because the startup code ships as a loose `C.OBJ` that
+the link line names ahead of `MC.LIB`. A scanner that reads zero start-address
+modules as "no entry point available" is wrong for a reason that has nothing to
+do with the binary it was given. Hence `--lib` accepts a directory, and the two
+failures are reported differently.
 
 Usage:
-    python libscan.py IMAGE.EXE --lib SLIBC.LIB
+    python libscan.py IMAGE.EXE --lib C:\\msc\\LIB        # the whole directory
+    python libscan.py IMAGE.EXE --lib SLIBC.LIB --lib C.OBJ
     python libscan.py dumped.bin --raw --lib SLIBC.LIB --lib SLIBFP.LIB
     python libscan.py IMAGE.EXE --lib SLIBC.LIB --json hits.json \\
-                                --exclude libregions.txt
+                                --exclude libregions.txt --names names.txt
+
+Prefer the directory form. It is one argument, it picks up the loose startup
+object, and on Microsoft C 5.0 it found two more modules and three more names
+than the single archive did.
 """
 
 import argparse
@@ -340,13 +352,35 @@ def _modend_start(body, is32):
     return (seg, disp, tmeth)
 
 
+def read_source(path):
+    """Modules from a .LIB, a loose .OBJ, or every one of both in a directory.
+
+    Directories matter more than they look. Not every toolchain puts its
+    startup code in the archive: Microsoft C 1.04 ships it as a loose `C.OBJ`
+    that the link line names ahead of `MC.LIB`, so a scan handed only the
+    archive finds no start-address module at all and recovers no entry point.
+    Pointing at the directory picks up both.
+    """
+    p = Path(path)
+    if not p.is_dir():
+        return read_library(p)
+    out = []
+    for f in sorted(p.iterdir()):
+        if f.suffix.lower() in (".lib", ".obj") and f.is_file():
+            try:
+                out += read_library(f)
+            except Exception as e:               # a stray file, not a library
+                print(f"  skipped {f.name}: {e}", file=sys.stderr)
+    return out
+
+
 def read_library(path):
     """Split an OMF library archive into modules."""
     buf = Path(path).read_bytes()
     name = Path(path).name
     if not buf or buf[0] != LIBHDR:
-        # A bare .OBJ is a library of one module; accept it, it is useful for
-        # the startup module when someone has C.OBJ but not the archive.
+        # A bare .OBJ is a library of one module; accept it, it is what you
+        # have when the startup code ships outside the archive.
         mod, _ = parse_module(buf, 0, name)
         return [mod] if mod else []
     page = struct.unpack_from("<H", buf, 1)[0] + 3
@@ -482,7 +516,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary")
     ap.add_argument("--lib", action="append", required=True,
-                    help="OMF library archive or object file (repeatable)")
+                    help="OMF library archive, object file, or a directory of "
+                         "both (repeatable). The directory form is preferred: "
+                         "some toolchains keep the startup object outside the "
+                         "archive")
     ap.add_argument("--raw", action="store_true",
                     help="treat the file as a load image with no MZ header")
     ap.add_argument("--min-fixed", type=int, default=MIN_FIXED)
@@ -499,9 +536,10 @@ def main():
 
     mods = []
     for lib in args.lib:
-        got = read_library(lib)
+        got = read_source(lib)
         print(f"{Path(lib).name}: {len(got)} modules")
         mods += got
+    startup = [m.name for m in mods if m.start is not None]
 
     hits, ambiguous, entry, collisions = scan(image, mods, args.min_fixed)
 
@@ -544,8 +582,24 @@ def main():
             ok = "MATCHES" if says == entry["file_offset"] else "DIFFERS FROM"
             print(f"  header says {cs:04X}:{ip:04X} -> image 0x{says:05X}"
                   f"   [{ok} the scan]")
+    elif not startup:
+        # Distinguish the two ways this fails. "Nothing declares a start
+        # address" is a statement about what was loaded, not about the binary,
+        # and reporting it as a negative result is how a scanner concludes
+        # "not a C program" for a reason that has nothing to do with the
+        # program. Microsoft C 1.04 is the known case: its startup code is a
+        # loose C.OBJ next to MC.LIB, and none of the archive's 75 modules
+        # sets the flag.
+        print("entry point: NOT ATTEMPTED -- none of the "
+              f"{len(mods)} modules loaded declares a start address.")
+        print("  The startup object may ship outside the archive. Pass the "
+              "library's directory\n  rather than the archive, or name the "
+              "startup .OBJ with another --lib.")
     else:
-        print("entry point: not recovered (no startup module matched)")
+        print(f"entry point: not recovered -- {', '.join(startup)} "
+              f"declares a start address but did not match the image.")
+        print("  Either this is a different build of that compiler, or the "
+              "image is not at\n  the offset the scan searched.")
 
     if args.json:
         Path(args.json).write_text(json.dumps(

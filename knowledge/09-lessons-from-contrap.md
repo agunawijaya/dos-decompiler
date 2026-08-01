@@ -84,7 +84,28 @@ description: the entry point does not have to be assumed to sit at offset 0 of
 the startup module's code segment, because the MODEND record of that module
 *states* the segment and displacement. Measured on four binaries across two
 compilers, the recovered entry point is exact every time, including for a
-packed-and-dumped image — see `tests/libscan/CASE-STUDY.md`.
+packed-and-dumped image — see `tests/libscan/CASE-STUDY.md`. They then checked
+the record against Microsoft C 1.04, a generation we have no copy of, and it
+reads correctly there too: segment 3, displacement 0, which is the offset they
+had originally observed empirically. Four compiler generations, earliest 1983.
+
+**And they found the heuristic we built on top of it, wrong.** We had said that
+exactly one module sets the start-address flag, so the flag identifies the
+startup module without needing its name. True in MS C 5.0, 5.1 and Open Watcom.
+In MS C 1.04 the count is zero of 75 modules, because the startup code is not
+in `MC.LIB` at all — it ships as a loose `C.OBJ` named on the link line ahead
+of the library.
+
+The failure mode is the lesson, not the fact. A scanner that reports "no module
+declares a start address" as "entry point not recovered" has made a claim about
+the binary from a fact about what the caller passed in. `libscan.py` now takes
+a directory, and distinguishes *nothing declared one* from *the one that
+declared it did not match*. The regression test reproduces the layout with Open
+Watcom so the case is tested rather than described.
+
+`[inferred]`, theirs: pre-1985 toolchains generally may separate crt0 from the
+library, since that is what makes it replaceable. One compiler is the whole
+basis for it.
 
 ### 4. Naming: the risk is confidence, not uncertainty
 

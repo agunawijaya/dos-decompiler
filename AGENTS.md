@@ -162,8 +162,12 @@ If the program was written in C and you have the compiler's library, recover it
 instead of guessing:
 
 ```
-python tools/libscan.py unpacked.exe --lib SLIBC.LIB
+python tools/libscan.py unpacked.exe --lib C:\path\to\compiler\LIB
 ```
+
+Pass the **directory**, not the `.LIB`. Not every toolchain keeps its startup
+code in the archive — Microsoft C 1.04 ships it as a loose `C.OBJ` named on the
+link line, and none of `MC.LIB`'s 75 modules declares a start address at all.
 
 The startup module of a C runtime declares the entry point in its MODEND
 record. `libscan.py` matches library modules against the image with the FIXUPP
@@ -172,6 +176,11 @@ matched — measured exact on four binaries across two compilers, including a
 packed-and-dumped one, without ever reading the MZ header
 (`tests/libscan/CASE-STUDY.md`). Scanned with the wrong compiler's library it
 reports nothing rather than something plausible, so a match is meaningful.
+
+Read the failure message, because there are two of them. *"None of the modules
+loaded declares a start address"* is a fact about what you passed in — look for
+the startup object outside the archive. *"X declares a start address but did
+not match"* is a fact about the binary.
 
 The same run tells you which compiler it is, bounds the runtime region so it
 can be excluded from matching, and names the runtime's functions from the
