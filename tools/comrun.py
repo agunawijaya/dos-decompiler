@@ -244,20 +244,25 @@ class Machine:
         easier and would prove less: the handler is where the scancode is
         filtered, acknowledged and translated, and a game that reads the
         keyboard itself keeps its own idea of what is held down. So the
-        interrupt is staged properly -- flags and a return address pushed the
-        way the hardware would, and the handler left to run to its `iret`.
+        interrupt is staged the way the hardware stages it -- flags, CS and the
+        *current* IP pushed -- and the handler runs to its own `iret`, which
+        lands execution back exactly where it was.
+
+        Pushing a sentinel return address instead is the obvious shortcut and
+        it destroys the thing you were driving: the program resumes at an
+        address it never came from and faults on the first fetch.
         """
-        sentinel = 0xFFE0
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        ip = self.uc.reg_read(UC_X86_REG_IP)
         self.pending_key = scancode
         sp = self.uc.reg_read(UC_X86_REG_SP)
-        cs = self.uc.reg_read(UC_X86_REG_CS)
-        for word in (0x0202, cs, sentinel):     # FLAGS, CS, IP
+        for word in (0x0202, cs, ip):           # FLAGS, CS, IP
             sp -= 2
             self.uc.mem_write(BASE + sp, struct.pack("<H", word))
         self.uc.reg_write(UC_X86_REG_SP, sp)
         self.stopped = None
         try:
-            self.uc.emu_start(BASE + LOAD + handler, BASE + sentinel,
+            self.uc.emu_start((cs << 4) + handler + LOAD, (cs << 4) + ip,
                               count=200_000)
         except UcError as e:
             self.stopped = f"fault in the key handler: {e}"
@@ -267,14 +272,14 @@ class Machine:
         """Let the program run, delivering a key between slices.
 
         Calling a game's routines by hand gets you a screen; it does not get
-        you a game. A title loop is waiting for a keypress, and the only way
+        you a game. A title loop is waiting for a keypress and the only way
         past it is to keep running and keep pressing. Execution resumes from
-        wherever the slice ended, so the program follows its own control flow
+        wherever each slice ended, so the program follows its own control flow
         throughout -- this drives it, it does not simulate it.
         """
-        ip = self.uc.reg_read(UC_X86_REG_IP)
-        cs = self.uc.reg_read(UC_X86_REG_CS)
         for n in range(slices):
+            cs = self.uc.reg_read(UC_X86_REG_CS)
+            ip = self.uc.reg_read(UC_X86_REG_IP)
             self.stopped = None
             try:
                 self.uc.emu_start((cs << 4) + ip, BASE + 0xFFFF,
@@ -283,12 +288,8 @@ class Machine:
                 return f"fault after {n} slices: {e}"
             if self.stopped:
                 return self.stopped
-            ip = self.uc.reg_read(UC_X86_REG_IP)
-            cs = self.uc.reg_read(UC_X86_REG_CS)
             if keys:
                 self.key(keys[n % len(keys)], handler)
-                ip = self.uc.reg_read(UC_X86_REG_IP)
-                cs = self.uc.reg_read(UC_X86_REG_CS)
         return f"ran {slices} slices"
 
     def framebuffer(self):
