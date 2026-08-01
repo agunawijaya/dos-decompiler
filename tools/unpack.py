@@ -94,6 +94,51 @@ def exepack_header(data, entry):
     return {"ip": ip, "cs": cs, "sp": sp, "ss": ss, "dest_paragraphs": dest}
 
 
+def lzexe_header(data, hdr, cs):
+    """Read LZEXE's own record of where the program really starts.
+
+    The same idea as `exepack_header` above, for the other packer that states
+    the answer instead of leaving it to be inferred. LZEXE 0.90 and 0.91 put a
+    sixteen-byte block at the *start* of their decompressor stub, and the MZ
+    header's entry offset skips over it -- an LZEXE'd file has `IP = 0x0E`
+    because the first fourteen bytes are this:
+
+        +0  ip          +8  compressed size, in paragraphs
+        +2  cs         +10  increase in size, in paragraphs
+        +4  sp         +12  decompressor size
+        +6  ss         +14  checksum
+
+    `cs` and `ss` are relative to the load segment, exactly as in an MZ header.
+
+    Two cross-checks pin the layout rather than trusting a field list, and both
+    were run on The Oregon Trail (MECC, 1990), 81,896 bytes packed:
+
+    * the compressed-size word reads 0x130F, and the packed file's own header
+      says the stub lives at segment 0x130F -- which it must, because LZEXE
+      places the stub immediately after the compressed data;
+    * SS:SP resolves to 0x310E0 against an unpacked image of 0x311E0 bytes, so
+      the stack sits 256 bytes below the top of the image, where a stack goes.
+
+    The entry it gives for that program is 0x10A. The behavioural heuristic
+    said 0x10F -- five bytes and one instruction later, which would have
+    skipped the first of six far calls to unit initialisers and left the
+    program half-initialised with nothing to indicate it.
+    """
+    if data[0x1C:0x20] not in (b"LZ91", b"LZ90"):
+        return None
+    at = hdr + (cs << 4)
+    if at + 16 > len(data):
+        return None
+    ip, cs0, sp, ss, packed, _grow, _stub, _sum = struct.unpack_from(
+        "<8H", data, at)
+    # The stub sits directly after the compressed data, so its segment is the
+    # compressed size. If those two disagree this is not the block we think.
+    if packed != cs:
+        return None
+    return {"ip": ip, "cs": cs0, "sp": sp, "ss": ss,
+            "version": data[0x1C:0x20].decode("ascii")}
+
+
 class Header:
     def __init__(self, data):
         if data[:2] not in (b"MZ", b"ZM"):
@@ -261,12 +306,24 @@ def unpack(path, trace=False, max_insns=MAX_INSNS, use_header=True):
     # had to run -- it is what produced the decompressed image -- but where the
     # program starts is stated by the packer, not inferred from behaviour.
     stated = exepack_header(data, h.hdr + (h.cs << 4) + h.ip) if use_header else None
+    lz = lzexe_header(data, h.hdr, h.cs) if use_header and not stated else None
     if stated:
         result["format"] = "Microsoft EXEPACK"
         result["oep_source"] = "packer header (authoritative)"
         oep = (stated["cs"] << 4) + stated["ip"]
         ss, sp = (LOAD_SEG + stated["ss"]) & 0xFFFF, stated["sp"]
         size = min(MEM_SIZE - LOAD_BASE, stated["dest_paragraphs"] * 16 + 0x100)
+    elif lz:
+        # LZEXE states the entry and the stack but not the unpacked length, so
+        # the extent still comes from watching where the decompressor wrote.
+        result["format"] = "LZEXE " + lz["version"][2:].replace("9", "0.9", 1)
+        result["oep_source"] = "packer header (authoritative)"
+        result["oep_guess"] = (state["oep"] - LOAD_BASE
+                               if state["oep"] is not None else None)
+        oep = (lz["cs"] << 4) + lz["ip"]
+        ss, sp = (LOAD_SEG + lz["ss"]) & 0xFFFF, lz["sp"]
+        top = max(state["written"]) + 1
+        size = min(MEM_SIZE - LOAD_BASE, (top << 4) - LOAD_BASE + 0x100)
     elif state["oep"] is not None:
         # The image is sound; the entry point is not.
         #
@@ -360,6 +417,13 @@ def main():
     print(f"format                : {info.get('format')}")
     print(f"original entry point  : offset 0x{info['oep_offset']:X}"
           f"  [{info.get('oep_source')}]")
+    if info.get("oep_guess") is not None and info["oep_guess"] != info["oep_offset"]:
+        # Worth printing every time. It is the only place the heuristic gets
+        # marked against an answer, and on the one file where both were
+        # available it was wrong by one instruction.
+        print(f"  (the behavioural heuristic would have said "
+              f"0x{info['oep_guess']:X} -- "
+              f"{info['oep_guess'] - info['oep_offset']:+d} bytes)")
     print(f"unpacked image        : {info['unpacked_size']:,} bytes")
     if info.get("oep_source", "").startswith("unknown"):
         print(f"\nNOTE: this format's entry point is not recovered. A "

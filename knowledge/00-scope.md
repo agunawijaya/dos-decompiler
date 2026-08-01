@@ -27,7 +27,8 @@ CGA). Where a tool assumes something, it assumes what Sopwith does.
 | Borland C / Turbo C | **Mostly** | cdecl is fine, but no signature database ships for it |
 | Packed, Microsoft EXEPACK | **Yes, via `unpack.py`** | validated: entry point exact, image 99.7% of a known-good unpacked build |
 | Packed, PKLITE | **Image yes, entry point no** | decompression verified on a 1988 game; the format does not state its entry point and no heuristic found it |
-| Packed, other (LZEXE, DIET) | **Probably the same** | untested; the mechanism is format-independent |
+| Packed, LZEXE 0.90/0.91 | **Yes, via `unpack.py`** | validated: the packer states its entry point and `unpack.py` now reads it |
+| Packed, other (DIET, TINYPROG) | **Probably the image, not the entry** | untested; decompression is format-independent, entry-point recovery is not |
 | Overlaid (FBOV, Borland/Microsoft overlays) | **No** | detected and warned about; nothing here handles them |
 | `.COM` files | **Yes, by a separate route** | no MZ header to interpret, so `comrec.py` reconstructs the file directly and proves it byte-for-byte — but the result is assembly, not C. See [08-com-reconstruction.md](08-com-reconstruction.md) |
 | Self-modifying or copy-protected | **No** | static analysis and emulation both mislead |
@@ -137,6 +138,34 @@ EXEPACK keeps a 16-byte header ending in `RB` immediately before its
 decompressor, carrying the real `CS:IP` and `SS:SP`; all four fields matched
 the plain build exactly. Formats without such a header fall back to the
 heuristic, and the tool says which it used and warns when it guessed.
+
+**LZEXE states it too**, and this was written down as untested for longer than
+it should have been. Versions 0.90 and 0.91 put a sixteen-byte block at the
+*start* of the decompressor stub — which is why an LZEXE'd file always has
+`IP = 0x0E`, stepping over it — holding `IP`, `CS`, `SP`, `SS`, the compressed
+size in paragraphs, and three more words.
+
+Two cross-checks pin that layout, and they matter because a field list copied
+from somewhere else is not evidence. On The Oregon Trail (MECC, 1990):
+
+- the compressed-size word reads `0x130F`, and the packed file's own header
+  puts the stub at segment `0x130F`. It has to: LZEXE places the stub directly
+  after the compressed data, so those two are the same number by construction.
+- `SS:SP` resolves to `0x310E0` against an unpacked image of `0x311E0` bytes.
+  The stack lands 256 bytes below the top of the image, which is where a stack
+  goes.
+
+`unpack.py` refuses the block if the first cross-check fails, so a file that
+merely contains the string `LZ91` cannot mislead it.
+
+The entry it gives is `0x10A`. **The heuristic said `0x10F`** — five bytes and
+one instruction later. On this program that single instruction is a far call to
+the first of six unit initialisers, so the heuristic's answer would have
+produced a program that starts one initialisation short, with nothing anywhere
+to indicate it. That is the second known-answer measurement of the heuristic
+and the second time it was wrong; both are recorded here rather than tuned
+away, because the conclusion they support is the tool's design and not a
+defect: **read what the format states, and when nothing states it, say so.**
 
 **PKLITE has now been tested**, on a PKLITE 1990-92 build of a 1988 commercial
 game. The decompression works, and there is direct evidence rather than an
