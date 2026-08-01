@@ -188,6 +188,64 @@ pointer, the second reachable only after the first, with the gap sweep blocked
 from rescuing either. Without the pass it recovers 27.9% of the file; with it,
 68.9%.
 
+## Jump tables: where to stop is the whole question
+
+The pass above handles a pointer held in a *variable*. The other shape reads
+the pointer out of a *table*:
+
+```nasm
+    mov bp, word [bx]           ; an index the game keeps
+    add bp, 0x75e               ; ... into a table at cs:0x75e
+    jmp word [cs:bp]
+```
+
+Zaxxon keeps its entire level script this way, and about 2,400 bytes of
+routines — 22 scenes and their per-frame handlers — are reachable only through
+it and two smaller siblings. Left alone, 57.9% of its code region came back as
+instructions; followed, **75.3%**.
+
+Finding the table is easy: the base is an immediate a few instructions above
+the jump. Knowing where it ends is the whole problem, and guessing is how a
+disassembler walks into artwork. Four bounds, all read from the file:
+
+* **The table is a gap.** Nothing reached it, so it lies in a run of unclaimed
+  bytes and cannot extend past the end of that run.
+* **A table does not run into the code it points at.** Both of Zaxxon's inner
+  tables end exactly where their first forward target begins, with no
+  terminator at all.
+* **Every entry must disassemble as a routine** — `walks_to_return()`: no
+  opcode a game never executes, and an end reached rather than run past. This
+  is the bound that does the real work, because it is what separates a table of
+  code addresses from a table of *data* pointers. Zaxxon's sprite dispatch is
+  the latter: word 0 is a pointer to artwork, the test refuses it, and the scan
+  stops with one target and reports nothing. Measured on Zaxxon, all 21
+  addresses in its three real tables reach a return; 21 of the 22 artwork
+  pointers beside them do not.
+* **Nothing beyond the code already found.** One of Zaxxon's four tables opens
+  with a word that points 69 bytes past the end of the program's code, into the
+  middle of the tile pointer table. It passes every other test — the bytes
+  decode, the run reaches a return — and it is not a routine. Slot zero is
+  allowed to be junk and nothing else is.
+
+Two of those bounds exist only because of a false positive, and it is worth
+being plain that they were added *after* looking at what the tool produced
+rather than before. A jump-table follower with three of the four rules
+inflated Zaxxon's code region by 287 bytes of tile pointers and reported a
+*higher* percentage for doing it.
+
+There is one more interaction worth recording. The gap sweep will happily claim
+a jump table as code — a run of code addresses disassembles cleanly and lands
+exactly on its far end, which is the entirety of the sweep's test. Two of
+Zaxxon's tables had been swallowed that way, so the table pass has to be able
+to take a swept run back and let the next round read it properly.
+
+`tests/com/fixtures/jumptable.asm` covers both halves: two routines reachable
+only through a table, and a second table whose first word is a data pointer,
+which must stop the reader dead. `regress.py` gained a `FORBIDDEN` list for
+that second half — a rule with no test for its refusal case is only half
+tested, and the half that costs nothing to get wrong is the one that ships a
+confident wrong answer.
+
 ## The trap: a .COM with two bases
 
 A `.COM` is nominally one segment, but anything larger than a few kilobytes
@@ -233,6 +291,31 @@ Note the `mov ax, ds` before the `retf`. It is easy to skim past, and it
 decides what `AX` holds when the real code starts — which in turn decides
 where `DS` ends up, and therefore what every data reference in the program
 means.
+
+### And the stub is not always at offset 0
+
+ParaTrooper's stub is the first thing in its file, so abstract-evaluating from
+byte 0 walks straight into it. Zaxxon (1984) does not oblige:
+
+    0x0000  jmp 0x180
+    0x0002  "Zaxxon is brought to you by :" ... 0x1A
+    0x0080  mov ax, cs / add ax, 0x20 / push ax / ... / retf
+
+The banner is a crack group's signature, written so that `TYPE ZAXXON.COM`
+prints it and stops at the DOS end-of-file byte. Between it and offset 0 is one
+`jmp`, and `detect_layout()` treated a jump as the end of the stub and gave up.
+
+The result is the clearest illustration in this repository of why byte-identity
+is not understanding:
+
+    instructions: 9 disassembled
+    bytes as code: 18 / 20,736  (0.1% of file)
+    BYTE-IDENTICAL
+
+Nine instructions. The rebuild was exact because 20,736 bytes were copied.
+Following a direct jump before evaluating — bounded, and refusing to revisit an
+address — costs four lines and takes Zaxxon from 9 instructions to 2,089 with
+no flags at all. `tests/com/fixtures/jmpstub.asm` reproduces the shape.
 
 ## Making the data readable
 
@@ -291,6 +374,27 @@ exactly on the boundary. That is luck. A handler containing one
 implausible-looking opcode, or sitting in a gap that does not end where it does,
 would have been lost silently. `tests/com/fixtures/interrupt.asm` is built so
 the sweep *cannot* rescue it, which is what makes the test meaningful.
+
+### The same install with no `es:` in it
+
+Reading only the absolute form is not enough. Zaxxon writes the slot through a
+base register instead:
+
+```nasm
+    mov ax, cs
+    lea dx, [0x191]             ; handler offset
+    xor cx, cx
+    mov ds, cx                  ; DS -> the vector table
+    mov bx, 0x70                ; 0x70 / 4 = vector 0x1C, the timer
+    mov word [bx], dx
+    mov word [bx + 2], ax
+```
+
+There is no `es:` anywhere in it and no constant that looks like a vector slot.
+Matching the absolute form alone found nothing, and the whole 47-byte timer
+handler stayed in the file as data — and with it every conclusion about how the
+game keeps time. The detector now tracks which segment register was zeroed and
+what constant a base register holds; `tests/com/fixtures/timer.asm` covers it.
 
 ## Provenance: was this written, or generated?
 
@@ -365,7 +469,10 @@ enough to seem to read backwards. Rendering all four orientations settled it in
 seconds. If a sheet contains any text, orient by the text: text has one correct
 orientation, shapes have four that all look fine. `--flip-v` and `--mirror`.
 
-## A measurement that does not work
+## A measurement that does not work — and the conclusion drawn from it, which was wrong
+
+This section used to end here, and the ending was wrong. Both halves are kept,
+because the mistake is more instructive than the fix.
 
 Pins look stale. Each is decided in one round against a program that later
 rounds change — the sweep turns data into code, labels appear where a `db` run
@@ -381,10 +488,32 @@ wrong, so 337 `call` instructions report a mismatch they had nothing to do with
 — and the measurement says 691 instructions are mis-encoded when the truth is
 646.
 
-**Pins cannot be evaluated in bulk, because releasing one moves the instructions
-after it.** The one-at-a-time loop is not a crude approximation of something
-better; it is the only measurement that means anything. The note stays in
-`comrec.py` so nobody spends a day on it twice.
+That measurement is real and it is still true. **The conclusion drawn from it —
+"pins cannot be evaluated in bulk" — did not follow.**
+
+Only a *length* change shifts the instructions after it. A pin whose released
+spelling assembles to the same number of bytes cannot move anything. So the
+answer is not to judge everything in one round; it is to put the
+length-changers back first and judge the rest in the round after that, when
+nothing has shifted. Two extra rounds, and the always-green loop re-proves
+byte-identity at the end exactly as before.
+
+| | pins before | pins after | still byte-identical |
+|---|---|---|---|
+| ParaTrooper | 236 | 178 | yes |
+| Zaxxon | 138 | 90 | yes |
+| Hard Hat Mack | 649 | 320 | yes |
+
+Half the pins in Hard Hat Mack were never mis-encoded at all; they were
+instructions demoted in an early round as collateral damage from one that was.
+Zaxxon pinned 41 plain `call` instructions that assemble to the original bytes
+on the first try.
+
+The lesson is not about pins. **A measurement that is sound can support a
+conclusion that is not**, and the way that happens is by mistaking "this
+number is meaningless" for "this cannot be measured". The first is a fact about
+one experiment; the second is a claim about every possible experiment, and it
+is much larger than the evidence.
 
 C. ParaTrooper has no stack-frame prologues anywhere — it was written in
 assembly, so there is no C source to recover and no amount of work will produce
@@ -396,19 +525,28 @@ Check for prologues before promising anyone C.
 
 ## Measured
 
-ParaTrooper (1982, Orion Software), 16,400 bytes, no manual flags:
+Three games, all with no manual flags, all byte-identical with SHA-256 verified
+independently of the tool:
 
-| | |
-|---|---|
-| rebuild | byte-identical, SHA-256 verified independently of the tool |
-| instructions disassembled | 2,017 |
-| pinned to fixed bytes | 236 (12%, all encoding-form alternates) |
-| code region `0x2B40..0x4010` | 87.7% recovered as instructions |
-| data head `0x0000..0x2B40` | 11,072 bytes, correctly left as data |
+| | ParaTrooper (1982) | Zaxxon (1984) | Hard Hat Mack (1983) |
+|---|---|---|---|
+| file size | 16,400 | 20,736 | 42,112 |
+| instructions disassembled | 2,017 | 2,633 | 9,060 |
+| pinned to fixed bytes | 178 | 114 | 320 |
+| code region | `0x2B40..0x4010` | `0x0000..0x20DD` | `0x0000..0x6C8B` |
+| recovered, of that region | **90.9%** | **75.3%** | **78.2%** |
+| of the whole file | 29.6% | 30.6% | 51.6% |
 
-The whole-file figure is 28.6%, and it is the wrong number to quote: two thirds
-of this program is a screen-offset table and sprite data. A percentage of the
-whole file measures the game, not the recovery.
+The whole-file figures are the wrong ones to quote. Two thirds of ParaTrooper
+is a screen-offset table and sprite data; 60% of Zaxxon is artwork. A
+percentage of the whole file measures the game, not the recovery — which is why
+the tool now trims a large data block from *either* end of the file rather than
+only from the front, and reports both numbers.
+
+Zaxxon needed three separate fixes to get there, and the sequence is the point:
+0.1% of the code region → 57.9% once the entry stub behind the banner was
+found → 75.3% once the jump tables were followed. Every one of those figures
+sat alongside `BYTE-IDENTICAL`.
 
 Regression fixtures live in `tests/com/`. They are written rather than taken
 from a real game, because games from the period are still under copyright.

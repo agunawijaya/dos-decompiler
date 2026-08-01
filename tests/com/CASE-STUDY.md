@@ -158,4 +158,23 @@ run.
 - `tools/comrec.py` — the reconstructor, with the always-green loop
 - `tools/triage.py` — routes `.COM` files here instead of refusing them
 - `knowledge/08-com-reconstruction.md` — the method and its limits
-- `tests/com/` — three fixtures, each rebuilt byte-identically on every run
+- `tests/com/` — eight fixtures, each rebuilt byte-identically on every run
+
+The fixture set grew as later games broke things this one did not reach. In
+order of when each was written:
+
+| fixture | what it pins down | the game that exposed it |
+|---|---|---|
+| `plain.asm` | the walk stops at the DOS exit; strings print as text | ParaTrooper |
+| `farstub.asm` | a `retf` stub splitting the file into two address bases | ParaTrooper |
+| `encodings.asm` | `strict word` recovers an encoding alternate; the rest pin | ParaTrooper |
+| `interrupt.asm` | a handler found by reading `xchg word [es:0x24], ax` | Hard Hat Mack |
+| `dispatch.asm` | `jmp word [var]`, resolved from who writes the pointer | Hard Hat Mack |
+| `jmpstub.asm` | the stub is behind a `jmp` over a text banner | Zaxxon |
+| `timer.asm` | the same vector install with no `es:` in it | Zaxxon |
+| `jumptable.asm` | routines reached through a table — and a decoy that must be refused | Zaxxon |
+
+`jumptable.asm` is the first fixture whose point is partly an **absence**: its
+second table holds a data pointer, and `regress.py` fails if the routine behind
+it comes back as code. A rule with no test for its refusal case is only half
+tested, and the untested half is the one that ships a confident wrong answer.

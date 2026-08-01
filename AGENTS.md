@@ -135,9 +135,21 @@ Two things to know before reporting results:
   but 87.7% of the region that actually holds code; the first number describes
   the game, the second describes the recovery.
 
+A `.COM` reconstruction is static: nothing is executed. When you need a
+reference to check a static reading against — a screen drawn from the file, a
+table you think you have decoded — `tools/comrun.py` runs the binary under
+emulation and dumps the framebuffer. It has just enough BIOS to get a game to
+its first frame, including a keyboard queue (`--keys`) and a clock that
+advances, both of which exist because without them a title screen waits
+forever. `--stop-at ADDR --stop-after N` stops on the Nth arrival, which is how
+you look at a frame other than the first.
+
 `knowledge/08-com-reconstruction.md` covers the traps — chiefly a stub that
 reloads CS so that half the file is addressed from a different base, which
-fails silently and confusingly if missed.
+fails silently and confusingly if missed, and which is not always at offset 0:
+Zaxxon hides it behind a `jmp` over a crack group's text banner, and reading
+the file naively recovered nine instructions out of 20,736 bytes while still
+reporting `BYTE-IDENTICAL`.
 
 ### If it is packed
 

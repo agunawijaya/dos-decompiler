@@ -66,6 +66,18 @@ EXPECTATIONS = {
          "ds:0x0002",                          # DS bias resolved
          "; ---- file 0x0200, addresses relative to 0x0000 ----"],
     ),
+    # The same split, with the stub hidden behind a jump over a title banner
+    # the way Zaxxon (1984) hides its. The needles are farstub's, because the
+    # result has to be the same; what differs is only that offset 0 holds a
+    # jump rather than the stub. Evaluating from offset 0 and stopping there
+    # recovered nine instructions of Zaxxon's 20,736 bytes.
+    "jmpstub": (
+        7.0,
+        ["detected from the entry stub",
+         "db 'Reached the second segment.'",
+         "ds:0x0002",
+         "; ---- file 0x0200, addresses relative to 0x0000 ----"],
+    ),
     "encodings": (
         30.0,
         ["strict word",                        # long immediate form recovered
@@ -82,6 +94,27 @@ EXPECTATIONS = {
          "out 0x20, al",                       # the end-of-interrupt
          "iret"],
     ),
+    # The same handler, installed through a base register with DS pointed at
+    # zero instead of an absolute `[es:slot]` write -- the way Zaxxon does it.
+    # No `es:` appears anywhere in the install, so matching the absolute form
+    # alone finds nothing and the handler stays in the file as data.
+    "timer": (
+        60.0,
+        ["INT 1Ch -> file",                    # reported, from comrec's output
+         "inc al",                             # inside the handler
+         "iret"],
+    ),
+    # Routines reached only through a table of addresses. Both hidden ones
+    # coming back proves the table was read; `three` staying out (see
+    # FORBIDDEN) proves the second table, whose first word is a data pointer,
+    # stopped the reader instead of sending it into artwork.
+    "jumptable": (
+        50.0,
+        ["jump tables : cs:0x",                # reported, from comrec's output
+         "-> 2 targets",                       # the 0xFFFF ended it
+         "mov dl, 0x41",                       # inside the first routine
+         "mov dl, 0x42"],                      # inside the second
+    ),
     # An indirect jump ends recursive descent. Both hidden states are reachable
     # only through the pointer, and the second only after the first has been
     # reached -- so finding `mov dl, 0x42` proves the detection iterated rather
@@ -92,6 +125,15 @@ EXPECTATIONS = {
          "mov dl, 0x41",                       # inside the first state
          "mov dl, 0x42"],                      # inside the second
     ),
+}
+
+
+# Some of what a fixture proves is an *absence*: a walk that stopped where it
+# should have. Nothing else here can express that, and a rule with no test for
+# its refusal case is only half tested -- the half that costs nothing to get
+# wrong.
+FORBIDDEN = {
+    "jumptable": ["mov dl, 0x43"],   # behind a data pointer; must stay data
 }
 
 
@@ -140,6 +182,11 @@ def run_case(nasm, name, workdir):
     missing = [n for n in needles if n not in body]
     if missing:
         return False, "output is missing: " + "; ".join(repr(x) for x in missing)
+
+    present = [n for n in FORBIDDEN.get(name, []) if n in body]
+    if present:
+        return False, ("output contains what it should have refused: "
+                       + "; ".join(repr(x) for x in present))
 
     return True, f"byte-identical, {pct:.1f}% as instructions"
 

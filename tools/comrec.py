@@ -193,6 +193,9 @@ class Reconstructor:
         self.labels = set()        # file offsets that need a label
         self.form = {}             # file_off -> which variant spelling to use
         self.extra = set()         # entry points found by the gap sweep
+        self.swept = {}            # sweep start -> end, what each one claimed
+        self.blocked = set()       # addresses the sweep must not swallow
+        self.reclaimed = False     # a swept run was taken back this round
         self.ds_bias = None        # file_off - DS-relative address, if known
 
     def segment_of_file(self, off):
@@ -257,6 +260,22 @@ class Reconstructor:
         `xchg` rather than `mov` because the program wants the old vector back
         to chain to, or to restore on exit.
 
+        The slot need not be written as an absolute address. Zaxxon (1984)
+        installs its timer tick by pointing DS at zero and walking a base
+        register to the slot instead:
+
+            mov ax, cs
+            lea dx, [0x191]             ; handler offset
+            xor cx, cx
+            mov ds, cx                  ; DS -> the vector table
+            mov bx, 0x70                ; 0x70 / 4 = vector 0x1C, the timer
+            mov word [bx], dx
+            mov word [bx + 2], ax
+
+        Same install, no `es:` anywhere in it. Reading only the absolute form
+        left the whole 47-byte handler sitting in the file as data, and with it
+        every conclusion about how the game keeps time.
+
         Hard Hat Mack's keyboard handler *was* recovered before this existed --
         but by the gap sweep, which accepted it because its bytes happened to
         decode cleanly and land on the boundary. That is luck, not method: a
@@ -266,31 +285,241 @@ class Reconstructor:
 
         Returns [(vector, file_offset)], and adds each to the entry points.
         """
+        HALVES = {"al": "ax", "ah": "ax", "bl": "bx", "bh": "bx",
+                  "cl": "cx", "ch": "cx", "dl": "dx", "dh": "dx"}
         found = []
-        pending = None            # (register, address) most recently loaded
+        imm = {}                  # register -> the constant it last held
+        zeroed = set()            # segment registers known to hold zero
+
         for off, (sz, text, _) in sorted(self.decoded.items()):
             m = re.match(r"^(?:lea (\w+), \[(0x[0-9a-f]+)\]"
                          r"|mov (\w+), (0x[0-9a-f]+))$", text)
             if m:
-                reg = m.group(1) or m.group(3)
-                val = int(m.group(2) or m.group(4), 16)
-                pending = (reg, val)
+                imm[m.group(1) or m.group(3)] = int(m.group(2) or m.group(4), 16)
                 continue
 
-            w = re.match(r"^(?:mov|xchg) word \[es:(0x[0-9a-f]+)\], (\w+)$", text)
-            if w and pending:
-                slot = int(w.group(1), 16)
+            z = re.match(r"^xor (\w+), (\w+)$", text)
+            if z and z.group(1) == z.group(2):
+                imm[z.group(1)] = 0
+                continue
+
+            s = re.match(r"^mov (ds|es|ss), (\w+)$", text)
+            if s:
+                if imm.get(s.group(2)) == 0:
+                    zeroed.add(s.group(1))
+                else:
+                    zeroed.discard(s.group(1))
+                continue
+
+            p = re.match(r"^pop (ds|es|ss)$", text)
+            if p:
+                zeroed.discard(p.group(1))
+                continue
+
+            w = re.match(r"^(?:mov|xchg) word \[(es:)?(0x[0-9a-f]+|bx|si|di)"
+                         r"(?: \+ (\d+))?\], (\w+)$", text)
+            if w:
+                sreg = "es" if w.group(1) else "ds"
+                base, disp, src = w.group(2), int(w.group(3) or 0), w.group(4)
+                if base.startswith("0x"):
+                    # An explicit [es:0x24] carries its own evidence: a low,
+                    # four-byte-aligned absolute offset is not something a
+                    # program writes to for any other reason.
+                    slot = int(base, 16) + disp if sreg == "es" else None
+                else:
+                    slot = (imm[base] + disp
+                            if base in imm and sreg in zeroed else None)
                 # Offsets live in the low word of a slot; the high word is the
                 # segment, which is always CS here and tells us nothing.
-                if slot < 0x400 and slot % 4 == 0 and w.group(2) == pending[0]:
+                if (slot is not None and slot < 0x400 and slot % 4 == 0
+                        and src in imm):
                     seg = self.segment_of_file(off)
-                    if seg is not None and seg.contains_addr(pending[1]):
-                        target = seg.file_off(pending[1])
+                    if seg is not None and seg.contains_addr(imm[src]):
+                        target = seg.file_off(imm[src])
                         found.append((slot // 4, target))
                         if target not in self.extra:
                             self.extra.add(target)
                             self.labels.add(target)
-                pending = None
+                continue
+
+            # Anything else: forget whatever it wrote, so a stale constant
+            # cannot be read as the handler address three instructions later.
+            mn = text.split(" ", 1)[0]
+            if mn in ("cmp", "test", "push", "call", "int", "out", "ret",
+                      "retf", "iret", "nop") or mn.startswith("j"):
+                continue
+            d = re.match(r"^\w+ (?:word |byte )?(\w+)(?:,|$)", text)
+            if d:
+                imm.pop(HALVES.get(d.group(1), d.group(1)), None)
+        return found
+
+    def walks_to_return(self, off, seg, limit=400):
+        """Does a straight-line read from here look like a routine?
+
+        This is the test that separates a table of code addresses from a table
+        of data pointers, and it is the only evidence available: both are words
+        that land inside the file. Disassemble forwards and see whether the
+        bytes behave like a routine -- no opcode a game never executes, and an
+        end reached rather than run past.
+
+        Measured on Zaxxon: all 21 addresses in its three jump tables reach a
+        return; 21 of the 22 sprite-graphics pointers next to them do not, and
+        the one that does is not the first word of its table, so the scan has
+        already stopped. Artwork decodes into valid instructions -- that is why
+        the sweep needs the same guards -- but it does not decode into
+        something shaped like a routine.
+        """
+        seen = 0
+        while seen < limit and off < seg.file_end:
+            insn = next(self.md.disasm(
+                bytes(self.image[off:min(off + 16, seg.file_end)]),
+                seg.addr(off)), None)
+            if insn is None or insn.mnemonic in IMPLAUSIBLE:
+                return False
+            if insn.mnemonic in ("ret", "retf", "iret", "jmp"):
+                return True
+            off += insn.size
+            seen += 1
+        return False
+
+    def detect_jump_tables(self):
+        """Follow `jmp word [cs:reg]` when the table it reads is a gap in the file.
+
+        The pass below resolves an indirect jump through a *variable*, because
+        the program writes a constant into it. This one resolves the other
+        shape, where the pointer is read out of a table:
+
+            mov bp, word [bx]           ; an index the game keeps
+            add bp, 0x75e               ; ... into a table at cs:0x75e
+            jmp word [cs:bp]
+
+        Zaxxon's whole level script is that table, and eleven routines
+        totalling about 2,400 bytes are reachable only through it. Left alone
+        they sit in the file as data: 57.9% of the code region came back as
+        instructions without this, 71.3% with it.
+
+        A table has no length field, so the question is where to stop, and
+        guessing is how a disassembler ends up walking through artwork. Two
+        facts in the file answer it without guessing:
+
+        * **The table is a gap.** It was not reached by the walk, so it lies in
+          a run of unclaimed bytes. It cannot extend past the end of that run,
+          because the next byte after it is already known to be an instruction.
+        * **A table does not run into the code it points at.** Both of
+          Zaxxon's inner tables end exactly where their first forward target
+          begins, and carry no terminator at all.
+        * **Every entry has to look like a routine.** `walks_to_return` above
+          is the test, and it is the one that does the real work: it separates
+          a table of code addresses from a table of *data* pointers, which is
+          what Zaxxon's sprite dispatch is. Its first word points at artwork,
+          the test refuses it, and the scan stops with one target and reports
+          nothing.
+
+        Stopping dead there is the right answer: the drawing routines that
+        table selects are reached another way, and a table of data pointers
+        read as code addresses would be exactly the confident wrong answer
+        this toolkit exists to avoid.
+
+        Returns [(table address, [target file offsets])].
+        """
+        gaps = self.gaps(min_len=4)
+        order = sorted(self.decoded.items())
+        found = []
+        reclaimed = False
+        # Nothing past the last instruction already found is accepted as a
+        # target. It is the bound that kills the one false positive Zaxxon
+        # produces: a table whose slot zero holds 0x2022, which is not a
+        # routine but a word in the middle of the tile pointer table, 69 bytes
+        # past the end of the program's code. It passes every other test --
+        # `and dh, [bx+di]` and its neighbours decode, and the run reaches a
+        # return. The price is that code living entirely beyond the known body
+        # is not found this way, which no file here does.
+        code_hi = max((off + sz for off, (sz, _, _) in self.decoded.items()),
+                      default=0)
+
+        for i, (off, (_, text, _)) in enumerate(order):
+            m = re.fullmatch(r"(?:jmp|call) word \[cs:(\w+)(?: \+ (\d+))?\]",
+                             text)
+            if not m:
+                continue
+            reg, disp = m.group(1), int(m.group(2) or 0)
+
+            # The base is loaded a few instructions earlier, usually as the
+            # last thing before the jump. Look back a short way and no further:
+            # a constant found twenty instructions up is not evidence.
+            base = None
+            for j in range(i - 1, max(-1, i - 12), -1):
+                pm = re.fullmatch(rf"(?:mov|add) {reg}, (0x[0-9a-f]+|\d+)",
+                                  order[j][1][1])
+                if pm:
+                    base = int(pm.group(1), 0) + disp
+                    break
+            seg = self.segment_of_file(off)
+            if base is None or seg is None or not seg.contains_addr(base):
+                continue
+
+            table = seg.file_off(base)
+            span = next(((a, b) for a, b in gaps if a <= table < b), None)
+            if span is None:
+                # The gap sweep got here first and read the table as code. It
+                # had no way not to: a run of code addresses disassembles
+                # cleanly and lands exactly on its far end, which is the whole
+                # of the sweep's test. An instruction naming this address as a
+                # jump table is better evidence, so take the run back and let
+                # the next round read it properly. Zaxxon has two tables the
+                # sweep had claimed, hiding about 700 bytes of routines behind
+                # twelve bytes of pointers apiece.
+                claim = next((s for s, e in self.swept.items()
+                              if s <= table < e), None)
+                if claim is not None and table not in self.blocked:
+                    self.blocked.add(table)
+                    self.extra.discard(claim)
+                    self.swept.pop(claim, None)
+                    reclaimed = True
+                continue
+            hi = span[1]
+
+            targets, at = [], table
+            while at + 2 <= hi:
+                # A table cannot run into the code it points at. Both of
+                # Zaxxon's inner tables end exactly where their first forward
+                # target begins, and carry no terminator at all.
+                ahead = [t for t in targets if t >= table]
+                if ahead and at >= min(ahead):
+                    break
+                word = self.image[at] | (self.image[at + 1] << 8)
+                if not seg.contains_addr(word):
+                    break
+                dest = seg.file_off(word)
+                if table <= dest <= at:
+                    break
+                if dest >= code_hi or not self.walks_to_return(dest, seg):
+                    # Slot zero is allowed to be junk and nothing else is. One
+                    # of Zaxxon's four tables opens with a word that points
+                    # into the tile pointer table, behind a caller that only
+                    # reaches slot zero for values it appears never to produce.
+                    # Every later entry has to be a routine, or this is not a
+                    # jump table -- which is what stops the sprite dispatch,
+                    # whose second word is artwork.
+                    if at != table:
+                        break
+                    at += 2
+                    continue
+                targets.append(dest)
+                at += 2
+
+            # One target is a jump, not a table. Two consecutive code
+            # addresses in a gap is a shape data does not fall into by chance.
+            if len(targets) < 2:
+                continue
+            found.append((base, sorted(set(targets))))
+            for t in targets:
+                if t not in self.extra:
+                    self.extra.add(t)
+                    self.labels.add(t)
+        # Taking a run back changes nothing this round but everything in the
+        # next one, so it has to count as progress or the loop stops early.
+        self.reclaimed = reclaimed
         return found
 
     def detect_dispatch_targets(self):
@@ -447,6 +676,12 @@ class Reconstructor:
             seg = self.segment_of_file(start)
             if seg is None or end > seg.file_end:
                 continue
+            # Something else has since proved this run holds a table. The
+            # landing test cannot tell a table of code addresses from code --
+            # both decode, both finish on the boundary -- so once there is
+            # better evidence, it wins.
+            if any(start <= b < end for b in self.blocked):
+                continue
 
             # Text decodes into perfectly valid instructions -- "Hello from a
             # plain COM file$" becomes insb/outsw/popaw and lands neatly on the
@@ -454,6 +689,16 @@ class Reconstructor:
             # the bytes before trusting the decode.
             body = self.image[start:end]
             if sum(1 for b in body if 0x20 <= b < 0x7F) >= 0.6 * len(body):
+                continue
+
+            # Zero fill is the other kind of data that passes the landing test
+            # for free. Two zero bytes decode as `add [bx + si], al`, so any
+            # even-length run of them finishes exactly on the far end however
+            # long it is. Zaxxon has 112 bytes of padding between its entry
+            # stub and the code the stub jumps to; before this guard they came
+            # back as fifty-six identical instructions, which inflated the
+            # recovered-code figure with bytes the program never executes.
+            if sum(1 for b in body if b == 0) >= 0.9 * len(body):
                 continue
 
             off, ok = start, True
@@ -471,6 +716,7 @@ class Reconstructor:
                 off += insn.size
             if ok and off == end and start not in self.extra:
                 self.extra.add(start)
+                self.swept[start] = end
                 found += 1
         return found
 
@@ -770,19 +1016,98 @@ class Reconstructor:
 
     # A note on an idea that does not work, so nobody spends a day on it twice.
     #
-    # The pins look stale: each is decided in one round against a program that
-    # later rounds change. The obvious improvement is to release them all once
-    # the structure settles and keep only those that still fail.
-    #
-    # Measuring it says otherwise. Release every pin on Hard Hat Mack and the
-    # rebuild comes out *two bytes shorter*, because `and ax, 0x2324` sits in
-    # the file as the 4-byte modrm form and NASM emits the 3-byte accumulator
-    # form. Every displacement after each shrink is then wrong, so 337 `call`
-    # instructions report a mismatch they are not responsible for.
-    #
-    # Pins cannot be evaluated in bulk: releasing one moves the instructions
-    # after it. The one-at-a-time loop already in run() is not a crude version
-    # of a better algorithm -- it is the only measurement that means anything.
+    def release_pins(self, nasm, good, max_rounds=8):
+        """Hand the pins back once the file is right, and see which stick.
+
+        Each pin is decided in one round against a program that later rounds
+        change: the sweep turns data into code, labels appear where a `db` run
+        used to be, and an instruction demoted in round 3 may have been
+        perfectly spellable by round 20. Zaxxon pinned 41 plain `call`
+        instructions that assemble to the original bytes on the first try.
+
+        **This note used to say the idea does not work, and that was wrong.**
+        What was measured then was releasing every pin and reading the
+        mismatch count off the very next assembly. That number is meaningless,
+        for the reason recorded at the time: `and ax, 0x2324` sits in Hard Hat
+        Mack as the 4-byte ModR/M form where NASM emits the 3-byte accumulator
+        form, and one shrunk instruction moves every displacement after it, so
+        337 `call` instructions report a mismatch they had nothing to do with.
+        The conclusion drawn -- that pins cannot be evaluated in bulk -- did
+        not follow. Only a *length* change shifts anything. Put the
+        length-changers back, and the round after that compares clean:
+
+        | | pins before | pins after |
+        |---|---|---|
+        | ParaTrooper | 236 | 178 |
+        | Zaxxon | 138 | 90 |
+        | Hard Hat Mack | 649 | 320 |
+
+        All three still rebuild byte-identically, which is the only thing that
+        was ever at stake -- byte-identity is re-proved here, not assumed, and
+        if the release does not settle the pinned version is put back.
+        """
+        saved = (set(self.demoted), dict(self.form))
+
+        # A label that lands strictly inside another instruction is never
+        # emitted -- emit() steps over instructions whole -- so releasing a
+        # branch to one only makes NASM reject the file.
+        interior = set()
+        for off, (sz, _, _) in self.decoded.items():
+            interior.update(range(off + 1, off + sz))
+        for off in list(self.demoted):
+            target = self.decoded[off][2]
+            if target is None or target not in interior:
+                self.demoted.discard(off)
+                self.form.pop(off, None)
+
+        for _ in range(max_rounds):
+            source, line_map = self.emit(with_map=True)
+            built, err, listing = self.assemble(source, nasm, want_listing=True)
+
+            if built is None:
+                bad = {line_map[int(m.group(1)) - 1]
+                       for m in re.finditer(r":(\d+): error:", err)
+                       if (int(m.group(1)) - 1) in line_map}
+                bad -= self.demoted
+                if not bad:
+                    break
+                self.demoted |= bad
+                continue
+
+            wrong_len, wrong_bytes = set(), set()
+            for line_idx, off in line_map.items():
+                produced = listing.get(line_idx)
+                entry = self.decoded.get(off)
+                if produced is None or entry is None:
+                    continue
+                want = self.image[off:off + entry[0]]
+                if len(produced) != len(want):
+                    wrong_len.add(off)
+                elif produced != want:
+                    wrong_bytes.add(off)
+
+            # Length first, on its own. Judging the byte comparisons in the
+            # same round is what produced the wrong answer last time.
+            bad = wrong_len or wrong_bytes
+            if bad:
+                for off in bad:
+                    entry = self.decoded[off]
+                    alts = variants(entry[1], entry[2] is not None)
+                    nxt = self.form.get(off, -1) + 1
+                    if nxt < len(alts):
+                        self.form[off] = nxt
+                    else:
+                        self.demoted.add(off)
+                continue
+
+            if self.first_mismatch(built) is None:
+                return source
+            break
+
+        # It did not settle. The pinned version was already proved correct, so
+        # that is what ships; a readability gain is not worth a maybe.
+        self.demoted, self.form = saved
+        return good
 
     def run(self, nasm, max_rounds=40):
         rounds = 0
@@ -797,10 +1122,14 @@ class Reconstructor:
             # Indirect jumps have to be resolved after the walk, because the
             # instruction that writes the pointer is often only reached by the
             # walk itself. Re-running the disassembly then reaches the target.
-            while self.detect_dispatch_targets():
+            while True:
+                changed = self.detect_dispatch_targets()
+                tables = self.detect_jump_tables()
+                if not (changed or tables or self.reclaimed):
+                    break
                 before = len(self.decoded)
                 self.disassemble()
-                if len(self.decoded) == before:
+                if len(self.decoded) == before and not self.reclaimed:
                     break
             source, line_map = self.emit(with_map=True)
             built, err, listing = self.assemble(source, nasm, want_listing=True)
@@ -854,6 +1183,7 @@ class Reconstructor:
                 # correctness.
                 if rounds < max_rounds and self.sweep_gaps():
                     continue
+                source = self.release_pins(nasm, source)
                 return source, source, rounds, None
 
             # Listing agreed instruction by instruction yet the file differs:
@@ -906,6 +1236,15 @@ def detect_layout(image, md):
     data. It is also the one fact a newcomer to the file is least likely to
     guess, which is reason enough for the tool to work it out rather than ask.
 
+    The stub is not always the first thing in the file. Zaxxon (1984) opens
+    with `jmp 0x180` over a twenty-line text banner and puts the same far
+    return on the other side of it, which is enough to make this walk give up
+    at the first instruction: evaluating from offset 0 and refusing to follow a
+    jump found nine instructions in a 20,736-byte file. So a direct jump is
+    followed rather than treated as the end of the stub. Nothing in the
+    evaluation cares whether two instructions were adjacent in the file, only
+    that control reached the second from the first.
+
     Returns (file_start, base) or None. Only the far-return idiom is handled;
     anything stranger is left to an explicit --segment.
     """
@@ -913,8 +1252,9 @@ def detect_layout(image, md):
     regs = {}
     stack = []
     off = 0
+    hops = set()
 
-    for _ in range(24):
+    for _ in range(32):
         insn = next(md.disasm(bytes(image[off:off + 16]), 0x100 + off), None)
         if insn is None:
             return None
@@ -957,7 +1297,21 @@ def detect_layout(image, md):
                 stack.append((CONST, int(ops, 0)))
             else:
                 return None
-        elif mn in ("jmp", "ret", "iret", "hlt"):
+        elif mn == "jmp":
+            # A jump over a block of data -- a banner, a copyright line, a
+            # table -- is the commonest reason the stub is not at offset 0.
+            # Follow it, but only when the target is a plain address inside
+            # the file, and only to somewhere this walk has not already been:
+            # a computed jump is unresolvable and a jump backwards is a loop,
+            # and in both cases the honest answer is to stop.
+            if not re.fullmatch(r"0x[0-9a-f]+|\d+", ops):
+                return None
+            dest = int(ops, 0) - 0x100
+            if not (0 <= dest < len(image)) or dest in hops:
+                return None
+            hops.add(dest)
+            off = dest
+        elif mn in ("ret", "iret", "hlt"):
             return None
         # Anything else is assumed not to disturb the values being tracked;
         # a wrong guess shows up immediately as a failed reconstruction.
@@ -994,6 +1348,9 @@ def main():
                     help="extra entry point, as a file offset")
     ap.add_argument("--nasm", default=None,
                     help="path to nasm; defaults to $NASM, then PATH")
+    ap.add_argument("--map", dest="mapfile", default=None, metavar="PATH",
+                    help="write a code/data region map, for deciding what to "
+                         "render with gfxdump.py")
     args = ap.parse_args()
 
     # No path from this machine belongs in the repository. Look where the user
@@ -1045,6 +1402,14 @@ def main():
             + ", ".join(f"0x{t:05X}" for t in ts) for v, ts in dispatch))
         print("              indirect jumps resolved from the constants "
               "written to the pointer")
+    tables = r.detect_jump_tables()
+    if tables:
+        print("jump tables : " + "; ".join(
+            f"cs:{base:#06x} -> {len(ts)} targets, 0x{min(ts):05X}..0x{max(ts):05X}"
+            for base, ts in tables))
+        print("              every entry disassembles as a routine and lies "
+              "inside the code\n              already found; the first that "
+              "does not ends the table")
     for finding, evidence in r.detect_provenance():
         print(f"provenance  : {finding}")
         print(f"              {evidence}")
@@ -1058,26 +1423,79 @@ def main():
     # artwork and lookup tables than about how well it was recovered. The
     # figure that matters is how much of the region that actually holds code
     # came back as instructions.
-    # A leading data block counts as "head" only if it sits at the very front
-    # of the file -- allowing for the few bytes of entry stub that usually
-    # precede it, as in ParaTrooper's twelve-byte jump into the real code.
-    body_lo = 0
+    #
+    # A big block of data counts as being outside that region only if it sits
+    # against one end of the file. ParaTrooper keeps its tables at the front
+    # and its code behind them; Zaxxon does the opposite, code first and 12,323
+    # bytes of artwork after it. Both shapes are one contiguous block bounded
+    # by an edge, so trim from each end -- allowing for the few bytes of entry
+    # stub that precede a leading block, as in ParaTrooper's twelve-byte jump.
+    body_lo, body_hi = 0, total
     for st, en in r.gaps(min_len=256):
-        if en - st > total * 0.15 and st < max(64, total * 0.02):
+        if en - st <= total * 0.15:
+            continue
+        if st < max(64, total * 0.02):
             body_lo = max(body_lo, en)
+        elif en >= total - 16:
+            body_hi = min(body_hi, st)
     # A body of zero bytes is not a degenerate case to divide by, it is a
     # finding: the walk from the entry point reached nothing, so whatever this
     # file is, it does not start where a .COM normally starts.
-    if body_lo and total > body_lo:
-        body = total - body_lo
-        in_body = sum(r.coverage()[body_lo:])
-        print(f"code region : 0x{body_lo:04X}..0x{total:04X}  ({body:,} bytes)")
+    if (body_lo or body_hi < total) and body_hi > body_lo:
+        body = body_hi - body_lo
+        in_body = sum(r.coverage()[body_lo:body_hi])
+        print(f"code region : 0x{body_lo:04X}..0x{body_hi:04X}  ({body:,} bytes)")
         print(f"  recovered : {in_body:,} bytes as instructions "
               f"({in_body / body:.1%} of the code region)")
-        print(f"  data head : 0x0000..0x{body_lo:04X} left as data "
-              f"({body_lo:,} bytes)")
+        if body_lo:
+            print(f"  data head : 0x0000..0x{body_lo:04X} left as data "
+                  f"({body_lo:,} bytes)")
+        if body_hi < total:
+            print(f"  data tail : 0x{body_hi:04X}..0x{total:04X} left as data "
+                  f"({total - body_hi:,} bytes)")
     print(f"disassembled: {disasm_bytes:,} bytes carry a decoded instruction "
           f"({disasm_bytes / total:.1%}), counting the pinned ones")
+
+    if args.mapfile:
+        # Which bytes are data is the question the next step asks, and it is
+        # not answerable from the .asm without reading all of it. The two
+        # columns beside each run are the cheap test for what kind of data:
+        # mostly printable is text, mostly zero is padding or a sparse table,
+        # and neither is what artwork looks like -- see gfxdump.py.
+        # 'pin' has to be its own kind or the map is unreadable: a pinned
+        # instruction is emitted as `db`, so counting it as data chops the
+        # routines into three-byte fragments and buries the real tables among
+        # two hundred spurious ones.
+        kinds = bytearray(total)
+        for off, (size, _, _) in r.decoded.items():
+            for i in range(off, min(off + size, total)):
+                kinds[i] = 1 if off in r.demoted else 2
+        names = {0: "data", 1: "pin", 2: "code"}
+
+        Path(args.mapfile).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.mapfile, "w", encoding="ascii") as fh:
+            fh.write(f"# region map of {os.path.basename(args.com)} "
+                     f"({total:,} bytes)\n")
+            fh.write("# code = covered by an instruction that survived "
+                     "verification\n")
+            fh.write("# pin  = an instruction NASM could not be made to "
+                     "re-encode, emitted as db\n")
+            fh.write("# data = not reached, or reached and rejected\n")
+            fh.write(f"# {'kind':<5} {'start':>7} {'end':>7} {'length':>7} "
+                     f"{'zero':>5} {'ascii':>6}\n")
+            i = 0
+            while i < total:
+                j = i
+                while j < total and kinds[j] == kinds[i]:
+                    j += 1
+                run = image[i:j]
+                zero = sum(1 for b in run if b == 0) / len(run)
+                text = sum(1 for b in run if 0x20 <= b < 0x7F) / len(run)
+                fh.write(f"  {names[kinds[i]]:<5} "
+                         f"0x{i:05X} 0x{j:05X} {j - i:7,} "
+                         f"{zero:5.0%} {text:6.0%}\n")
+                i = j
+        print(f"map         : wrote {args.mapfile}")
 
     if disasm_bytes < total * 0.02:
         # Say it plainly rather than leaving a 0.1% to be read as a bad day.
