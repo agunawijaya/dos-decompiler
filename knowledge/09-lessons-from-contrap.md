@@ -242,8 +242,36 @@ these looked right until the reconstruction failed:
 
 That table is the same lesson this toolkit reached from the other direction
 while rendering Hard Hat Mack: four errors were caught by drawing the data, not
-by reading the code. Drawing is a form of proof. Counting what the drawing
-fails to explain is a better one.
+by reading the code. Drawing is a form of proof.
+
+### A limit on the fraction, found by using it
+
+We adopted the framing and then measured something it cannot see, so this
+qualifies our own claim rather than theirs.
+
+`placements.py` reached **100% on all three Hard Hat Mack levels while one
+routine was placing a fourteen-girder floor as a diagonal staircase across the
+score line.** It read the column from a table indexed by the loop counter in BX
+and the row from a table indexed by a fixed value in SI, and the extractor
+resolved both with one index. Every call produced a placement, so every call
+counted as explained. **The number was identical before and after the fix.**
+The picture was not: the diagonal vanished and a floor appeared.
+
+The difference is in the oracle, and it is worth being precise about it. Their
+197/197 compares against blits *captured from the running program*, so a wrong
+coordinate fails it. Ours compares against nothing — it counts call sites that
+yielded a value. It therefore measures what is **missing** and is blind to what
+is **wrong**.
+
+That is not an argument against the metric, which drove coverage from 61/53/72%
+to 100% by finding real gaps. It is an argument that it does not retire the
+picture. Both were needed, in that order: the fraction found the missing
+sprites, and drawing the result found the misplaced ones.
+
+The general form is the part worth keeping. **An oracle with no reference can
+only detect absence.** If nothing external states the right answer,
+completeness is measurable and correctness is not — and a metric that cannot
+fall is not evidence, however high it reads.
 
 ## Things they did not solve either
 
