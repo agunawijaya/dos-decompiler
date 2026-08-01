@@ -787,6 +787,7 @@ knowledge/
   07-extended-reconstruction.md the verified-reconstruction workflow
   08-com-reconstruction.md   the .COM route, which reaches byte-identity in one run
   09-lessons-from-contrap.md what a reconstruction done without this toolkit taught it
+  10-data-beside-the-executable.md  the ninety files that are not the program
 signatures/                  C runtime fingerprints: MS C 5.0, MS C 5.1, Watcom
 tests/sopwith/               the validation fixture and full case study
 tests/com/                   .COM fixtures, rebuilt byte-identically on every run

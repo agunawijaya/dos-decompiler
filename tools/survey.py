@@ -18,7 +18,13 @@ What it looks for
   * overlay files -- .OVL, .OVR, and MZ files whose header says they are
     overlay modules rather than programs
   * batch files, which frequently name the real entry point
-  * data files, grouped, with the ones large enough to matter called out
+  * data files, grouped by extension and totalled -- ninety small files say
+    more about a program than one large one, and a per-file size threshold
+    cannot see that
+  * container formats recognised by magic, so a documented format is not
+    reverse engineered by mistake
+  * index/heap pairs: a file whose contents read as offsets into a same-named
+    sibling, which is how a game too large for one file stores its artwork
   * the interpreted-engine pattern, judged across the whole tree rather than
     one directory
 
@@ -145,6 +151,93 @@ def pick_main(executables, batch_named, root_name):
     return biggest, "largest executable, no stronger signal available"
 
 
+# Container formats worth naming on sight. A magic string here saves the day
+# that would otherwise go into deciding a bespoke format is not bespoke.
+CONTAINER_MAGIC = [
+    (b"pcxLib", "Genus Microprogramming pcxLib -- a container of ZSoft PCX "
+                "images, and PCX is documented"),
+    (b"\x0a\x05\x01\x08", "a ZSoft PCX image, version 5, RLE, 8 bits/plane"),
+    (b"\x0a\x05\x01\x01", "a ZSoft PCX image, version 5, RLE, 1 bit/plane"),
+    (b"GIF8", "a GIF"),
+    (b"BM", "a Windows bitmap"),
+    (b"FORM", "an IFF container"),
+    (b"MThd", "a standard MIDI file"),
+    (b"Creative Voice File", "a Creative Labs VOC sample"),
+    (b"RIFF", "a RIFF container -- probably WAV"),
+]
+
+
+def container_hint(path):
+    try:
+        head = path.open("rb").read(64)
+    except OSError:
+        return None
+    for magic, what in CONTAINER_MAGIC:
+        if head.startswith(magic):
+            return what
+    return None
+
+
+def index_pairs(files, root):
+    """Find files that read as an index into a same-named sibling.
+
+    A 1980s game too big to keep its artwork inside the executable puts it in a
+    heap beside an index: one file of offsets, one file of records. The pattern
+    is common enough to be worth recognising by shape rather than by name, and
+    the shape is testable -- the offsets must ascend and must land inside the
+    other file.
+
+    Karateka (1984) is the case that prompted this. Ninety data files, twenty-
+    eight `.IND`/`.DAT` pairs, and this tool reported none of them because they
+    are all under the size at which a data file was considered worth naming.
+    Ninety small files is a stronger signal than one large one, and it was the
+    signal being thrown away.
+
+    Returns [(index file, data file, entries, stride, note)].
+    """
+    by_stem = {}
+    for f in files:
+        if f["kind"] not in ("data", "overlay-or-data"):
+            continue
+        p = root / f["path"]
+        by_stem.setdefault(p.stem.upper(), []).append(p)
+
+    out = []
+    for stem, group in sorted(by_stem.items()):
+        if len(group) != 2:
+            continue
+        for a, b in ((group[0], group[1]), (group[1], group[0])):
+            try:
+                ia, db = a.read_bytes(), b.stat().st_size
+            except OSError:
+                continue
+            if not (0 < len(ia) < db):
+                continue
+            for stride, off_at in ((4, 2), (2, 0)):
+                offs, ok = [], True
+                for k in range(0, len(ia) - stride + 1, stride):
+                    w = int.from_bytes(ia[k + off_at:k + off_at + 2], "little")
+                    key = int.from_bytes(ia[k:k + 2], "little")
+                    if key == 0xFFFF:          # a terminator, and often the
+                        offs.append(w)         # total length
+                        break
+                    offs.append(w)
+                if len(offs) < 3:
+                    continue
+                ok = all(offs[i] <= offs[i + 1] for i in range(len(offs) - 1))
+                ok = ok and offs[-1] <= db
+                if ok:
+                    slack = db - offs[-1]
+                    note = (f"last offset {offs[-1]:,} of {db:,}"
+                            + (f", {slack} bytes over" if slack else ", exact"))
+                    out.append((a.name, b.name, len(offs) - 1, stride, note))
+                    break
+            else:
+                continue
+            break
+    return out
+
+
 def survey(root):
     given = str(root)
     root = Path(root)
@@ -210,9 +303,31 @@ def survey(root):
                            f"{main['size']:,} byte executable "
                            f"({ratio:.0f}x)")
 
+    # Data files grouped by extension. Ninety small files say more about a
+    # program than one large one, and the old threshold hid them entirely.
+    from collections import Counter
+    ext_count, ext_bytes = Counter(), Counter()
+    for f in by_kind["data"] + by_kind["overlay-or-data"]:
+        e = (Path(f["path"]).suffix or "(none)").upper()
+        ext_count[e] += 1
+        ext_bytes[e] += f["size"]
+    groups = [(e, ext_count[e], ext_bytes[e]) for e in ext_count]
+    groups.sort(key=lambda g: -g[2])
+
+    containers = []
+    for f in by_kind["data"] + by_kind["overlay-or-data"]:
+        what = container_hint(root / f["path"])
+        if what:
+            containers.append((f["path"], f["size"], what))
+
+    pairs = index_pairs(by_kind["data"] + by_kind["overlay-or-data"], root)
+
     return {
         "root": str(root),
         "given": given,
+        "data_groups": groups,
+        "containers": containers[:12],
+        "index_pairs": pairs,
         "subdirectories": sorted(dirs),
         "counts": {k: len(v) for k, v in sorted(by_kind.items())},
         "executables": by_kind["executable"],
@@ -276,6 +391,35 @@ def report(s):
         A("-- Data files worth knowing about ---------------------------------")
         for f in s["notable_data"][:12]:
             A(f"  {f['path']:<28} {f['size']:>9,}")
+        A("")
+
+    if s.get("data_groups"):
+        A("-- The data beside the executable ----------------------------------")
+        for ext, n, total in s["data_groups"][:10]:
+            A(f"  {ext:<10} {n:>4} files  {total:>10,} bytes")
+        A("")
+
+    if s.get("containers"):
+        A("-- Formats recognised on sight -------------------------------------")
+        for path, size, what in s["containers"]:
+            A(f"  {path:<24} {size:>9,}  {what}")
+        A("")
+
+    if s.get("index_pairs"):
+        A("-- Index and heap pairs --------------------------------------------")
+        for ind, dat, n, stride, note in s["index_pairs"][:14]:
+            A(f"  {ind:<14} indexes {dat:<14} {n:>4} entries, "
+              f"{stride}-byte stride")
+            A(f"  {'':14} {note}")
+        if len(s["index_pairs"]) > 14:
+            A(f"  ... {len(s['index_pairs']) - 14} more pairs of the same shape")
+        for line in triage._wrap(
+                "A game too large to keep its artwork inside the executable "
+                "puts it in a heap beside an index. The offsets ascend and land "
+                "inside the other file, which is what was tested here -- but "
+                "what a record contains is a separate question, and one no tool "
+                "here answers yet.", 66):
+            A("  " + line)
         A("")
 
     A("-- Read this before starting --------------------------------------")
