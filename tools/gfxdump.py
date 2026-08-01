@@ -65,17 +65,28 @@ def unpack(data, width_bytes):
     return rows
 
 
-def render(rows, palette, scale, mirror=False):
-    """Draw the rows. `mirror` flips horizontally.
+def render(rows, palette, scale, mirror=False, flip_v=False):
+    """Draw the rows. `mirror` flips left-right, `flip_v` flips top-bottom.
 
-    Some games store sprites as a mirror image of what appears on screen,
-    because the routine that draws them walks the data backwards. Hard Hat
-    Mack does: its Electronic Arts logo is unreadable until flipped, and then
-    it is unmistakable. If a sprite sheet looks like plausible shapes rendered
-    by someone holding the paper up to a mirror, this is why.
+    Sprites are often stored in whatever order the drawing routine happens to
+    walk them, which need not be top-left first. Hard Hat Mack stores them
+    **bottom row first**, because its blitter steps *down* a table of scanline
+    addresses (`dec bp / dec bp`) while reading the sprite forwards.
+
+    Get this wrong and the picture is still made of plausible shapes, which is
+    exactly the trap: it looks like something, so you stop checking. Its
+    Electronic Arts logo was first read here as *horizontally* mirrored,
+    because at small scale a vertically flipped E-L-C-T-O-I-A-R-S is symmetric
+    enough to seem to read backwards. Only rendering all four orientations
+    settled it.
+
+    If a sheet contains any text at all, use it: text has exactly one correct
+    orientation, and shapes do not.
     """
     if not rows:
         return Image.new("RGB", (1, 1))
+    if flip_v:
+        rows = rows[::-1]
     if mirror:
         rows = [row[::-1] for row in rows]
     h, w = len(rows), len(rows[0])
@@ -95,13 +106,13 @@ def label(img, text, pad=18):
     return out
 
 
-def sheet(data, palette, scale, widths, mirror=False):
+def sheet(data, palette, scale, widths, mirror=False, flip_v=False):
     """The same bytes at several widths, side by side.
 
     Only one width makes the picture stand up straight. The rest shear it, and
     the difference is obvious at a glance -- which is the whole point.
     """
-    panels = [label(render(unpack(data, w), palette, scale, mirror), f"{w} bytes = {w*4}px")
+    panels = [label(render(unpack(data, w), palette, scale, mirror, flip_v), f"{w} bytes = {w*4}px")
               for w in widths]
     gap = 10
     W = sum(p.width for p in panels) + gap * (len(panels) + 1)
@@ -114,14 +125,14 @@ def sheet(data, palette, scale, widths, mirror=False):
     return out
 
 
-def grid(data, base, stride, count, width_bytes, palette, scale, cols=8, mirror=False):
+def grid(data, base, stride, count, width_bytes, palette, scale, cols=8, mirror=False, flip_v=False):
     """One cell per fixed-size record, laid out as a contact sheet."""
     cells = []
     for i in range(count):
         chunk = data[i * stride:(i + 1) * stride]
         if len(chunk) < stride:
             break
-        cells.append(label(render(unpack(chunk, width_bytes), palette, scale, mirror),
+        cells.append(label(render(unpack(chunk, width_bytes), palette, scale, mirror, flip_v),
                            f"#{i}  0x{base + i * stride:05X}"))
     if not cells:
         return Image.new("RGB", (1, 1))
@@ -135,7 +146,7 @@ def grid(data, base, stride, count, width_bytes, palette, scale, cols=8, mirror=
     return out
 
 
-def selfsized(data, base, count, palette, scale, cols=10, mirror=False):
+def selfsized(data, base, count, palette, scale, cols=10, mirror=False, flip_v=False):
     """Sprites that carry their own size: two header bytes, then the pixels.
 
     Hard Hat Mack stores them as [width_in_bytes, height_in_rows, pixels...].
@@ -157,7 +168,7 @@ def selfsized(data, base, count, palette, scale, cols=10, mirror=False):
         if off + 2 + n > len(data):
             break
         rows = unpack(data[off + 2:off + 2 + n], w)
-        cells.append(label(render(rows, palette, scale, mirror),
+        cells.append(label(render(rows, palette, scale, mirror, flip_v),
                            f"0x{base + off:05X}  {w*4}x{h}"))
         off += 2 + n
         i += 1
@@ -192,6 +203,8 @@ def main():
     ap.add_argument("--count", type=int, default=32)
     ap.add_argument("--mirror", action="store_true",
                     help="flip horizontally; some games store sprites mirrored")
+    ap.add_argument("--flip-v", action="store_true", dest="flip_v",
+                    help="flip top-bottom; many games store sprites bottom row first")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -202,13 +215,13 @@ def main():
     pal = PALETTES[args.palette]
 
     if args.self_sized:
-        img = selfsized(data, at, args.count, pal, args.scale, mirror=args.mirror)
+        img = selfsized(data, at, args.count, pal, args.scale, mirror=args.mirror, flip_v=args.flip_v)
     elif args.sheet:
-        img = sheet(data, pal, args.scale, [int(w) for w in args.widths.split(",")], args.mirror)
+        img = sheet(data, pal, args.scale, [int(w) for w in args.widths.split(",")], args.mirror, args.flip_v)
     elif args.stride:
-        img = grid(data, at, args.stride, args.count, args.width, pal, args.scale, mirror=args.mirror)
+        img = grid(data, at, args.stride, args.count, args.width, pal, args.scale, mirror=args.mirror, flip_v=args.flip_v)
     else:
-        img = render(unpack(data, args.width), pal, args.scale, args.mirror)
+        img = render(unpack(data, args.width), pal, args.scale, args.mirror, args.flip_v)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     img.save(args.out)

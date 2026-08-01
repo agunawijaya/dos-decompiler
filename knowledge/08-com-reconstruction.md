@@ -291,11 +291,17 @@ some games store the size in the data -- Hard Hat Mack writes
 `[width_bytes, height_rows]` ahead of every sprite, which is why its pointer
 table steps by 66 for a 4x16 and 34 for a 4x8. `--self-sized` reads that.
 
-**Expect mirrored data.** Hard Hat Mack's sprites decode as horizontal mirrors
-of themselves, presumably because the blitter walks backwards. The tell was its
-Electronic Arts logo: unreadable until flipped, unmistakable after. If a sheet
-looks like plausible shapes drawn by someone holding the paper to a mirror,
-pass `--mirror`.
+**Expect the wrong orientation, and settle it with text.** Sprites are stored
+in whatever order the drawing routine walks them, which need not be top-left
+first. Hard Hat Mack stores them **bottom row first**, because its blitter
+steps down a table of scanline addresses while reading the sprite forwards.
+
+This is a trap because the wrong orientation still produces plausible shapes,
+so you stop checking. Its Electronic Arts logo was first read as *horizontally
+mirrored* — at small scale a vertically flipped E-L-C-T-O-I-A-R-S is symmetric
+enough to seem to read backwards. Rendering all four orientations settled it in
+seconds. If a sheet contains any text, orient by the text: text has one correct
+orientation, shapes have four that all look fine. `--flip-v` and `--mirror`.
 
 ## A measurement that does not work
 
