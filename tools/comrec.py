@@ -986,7 +986,10 @@ def main():
     for st, en in r.gaps(min_len=256):
         if en - st > total * 0.15 and st < max(64, total * 0.02):
             body_lo = max(body_lo, en)
-    if body_lo:
+    # A body of zero bytes is not a degenerate case to divide by, it is a
+    # finding: the walk from the entry point reached nothing, so whatever this
+    # file is, it does not start where a .COM normally starts.
+    if body_lo and total > body_lo:
         body = total - body_lo
         in_body = sum(r.coverage()[body_lo:])
         print(f"code region : 0x{body_lo:04X}..0x{total:04X}  ({body:,} bytes)")
@@ -996,6 +999,22 @@ def main():
               f"({body_lo:,} bytes)")
     print(f"disassembled: {disasm_bytes:,} bytes carry a decoded instruction "
           f"({disasm_bytes / total:.1%}), counting the pinned ones")
+
+    if disasm_bytes < total * 0.02:
+        # Say it plainly rather than leaving a 0.1% to be read as a bad day.
+        # The rebuild can still be byte-identical -- emitting the whole file as
+        # `db` would be -- and that would prove nothing about understanding it.
+        print("\nNOTE: almost nothing was reached from the entry point. The "
+              "rebuild below may\n      still be byte-identical, which in this "
+              "state means only that the bytes were\n      copied. Likely "
+              "causes, in the order worth checking:")
+        print("        - the file is packed or self-decrypting, and the real "
+              "code appears only\n          after the loader has run")
+        print("        - execution leaves the entry stub through a jump the "
+              "walker does not\n          follow (a table, a computed target, "
+              "an interrupt vector)")
+        print("        - it is not a .COM at all, whatever the extension says")
+        print("      Look at the first 64 bytes before going further.")
 
     if err:
         print(f"\nFAILED: {err}")
