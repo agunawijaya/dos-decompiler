@@ -47,6 +47,7 @@ class Extractor:
         self.base = load_base
         self.image = rec.image
         self.unparsed = []
+        self.out_guard = []
 
     def routine(self, start, limit=300):
         out, j = [], self.idx.get(start)
@@ -71,14 +72,18 @@ class Extractor:
         in the outer routine and the column in the inner one, so a callee that
         starts from a blank slate loses half of every placement.
         """
+        # `seen` is the current call *path*, not every routine ever visited.
+        # Blocking a routine because it was called once before loses every
+        # repeat -- and a screen is built almost entirely out of repeats.
         if seen is None:
-            seen = set()
-        if (start, depth) in seen or depth > 3:
+            seen = []
+        if start in seen or depth > 5 or len(self.out_guard) > 4000:
             return []
-        seen.add((start, depth))
+        seen = seen + [start]
 
         out = []
         state = dict(inherited) if inherited else {}
+        state.setdefault("vars", {})
         state.setdefault("col", None); state.setdefault("row", None)
         state.setdefault("sel", None); state.setdefault("col_tab", None)
         state.setdefault("row_tab", None); state.setdefault("count", None)
@@ -101,6 +106,19 @@ class Extractor:
             if m:
                 state["al"] = ("var", int(m.group(1), 16))
                 continue
+            # A builder configures the routines it is about to call by writing
+            # constants into variables. Reading those variables' *initial* value
+            # from the file gives the wrong answer for every screen but the one
+            # the file happened to be saved in.
+            m = re.match(r"^mov byte \[(0x[0-9a-f]+)\], al$", t)
+            if m and not isinstance(state.get("al"), tuple):
+                a = int(m.group(1), 16)
+                if a not in (int(self.col_var, 16), int(self.row_var, 16)):
+                    state["vars"][a] = state["al"]
+            m = re.match(r"^mov word \[(0x[0-9a-f]+)\], (0x[0-9a-f]+)$", t)
+            if m and int(m.group(1), 16) != int(self.sel_var, 16):
+                state["vars"][int(m.group(1), 16)] = int(m.group(2), 16)
+
             if re.match(r"^mov byte \[%s\], al$" % self.col_var, t):
                 v = state["al"]
                 if isinstance(v, tuple) and v[0] == "tab":
@@ -115,8 +133,12 @@ class Extractor:
                 if isinstance(v, tuple) and v[0] == "tab":
                     state["row_tab"] = v[1]
                 elif isinstance(v, tuple) and v[0] == "var":
-                    off = v[1] - self.base
-                    state["row"] = self.image[off] if 0 <= off < len(self.image) else None
+                    if v[1] in state["vars"]:
+                        state["row"] = state["vars"][v[1]]
+                    else:
+                        off = v[1] - self.base
+                        state["row"] = (self.image[off]
+                                        if 0 <= off < len(self.image) else None)
                 else:
                     state["row"] = v
                 continue
@@ -145,14 +167,20 @@ class Extractor:
                 continue
             m = re.match(r"^mov bl, byte \[(0x[0-9a-f]+)\]$", t)
             if m:
-                off = int(m.group(1), 16) - self.base
-                if 0 <= off < len(self.image):
-                    state["sel_idx"] = self.image[off]
+                a = int(m.group(1), 16)
+                if a in state["vars"]:
+                    state["sel_idx"] = state["vars"][a]      # what the builder set
+                else:
+                    off = a - self.base
+                    if 0 <= off < len(self.image):
+                        state["sel_idx"] = self.image[off]
                 continue
 
             if t.startswith("call") and g is not None:
                 if g in self.drawers:
-                    out += self.emit(state, o)
+                    got = self.emit(state, o)
+                    self.out_guard += got
+                    out += got
                     state["col"] = state["row"] = None
                     state["col_tab"] = state["row_tab"] = None
                 else:
