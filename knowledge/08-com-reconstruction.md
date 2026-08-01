@@ -178,6 +178,28 @@ dispatch    : jmp [0x0bd9] -> 0x00BB6; jmp [0x6daa] -> 0x02AFC, 0x02B05, 0x02B0E
               indirect jumps resolved from the constants written to the pointer
 ```
 
+### One character class, nine routines
+
+Worth recording because the failure was silent and the fix was trivial.
+
+Capstone prints a one-digit address **without the `0x`**. A program that keeps
+its dispatch pointer low in memory therefore produces
+
+    call word [9]
+    mov word [9], 0x1e15
+
+and a detector matching `0x[0-9a-f]+` skips both without a word. Zaxxon keeps
+its per-scene wall test at `[9]` — inside its own PSP, which a `.COM` is free
+to reuse once it has read the command line — and calls **nine** different
+routines through it. All nine sat in the file as data, and nothing in the
+output distinguished *there is nothing there* from *the pattern did not match*.
+
+The recursive-descent walk already carried a comment about this exact quirk,
+added when a branch to address 8 arrived as `"8"`. The lesson is not about
+capstone: **a workaround applied in one place is a bug report about every other
+place that parses the same text.** `tests/com/fixtures/dispatch.asm` gained a
+third state behind `[9]` so the two address forms are both covered.
+
 **What it will not do** is follow a pointer loaded from a table or arrived at
 by arithmetic. Then there is nothing to report and it reports nothing, which is
 the correct failure — a guessed entry point sends the disassembler into the
@@ -531,11 +553,11 @@ independently of the tool:
 | | ParaTrooper (1982) | Zaxxon (1984) | Hard Hat Mack (1983) |
 |---|---|---|---|
 | file size | 16,400 | 20,736 | 42,112 |
-| instructions disassembled | 2,017 | 2,633 | 9,060 |
-| pinned to fixed bytes | 178 | 114 | 320 |
+| instructions disassembled | 2,017 | 2,655 | 9,060 |
+| pinned to fixed bytes | 178 | 116 | 320 |
 | code region | `0x2B40..0x4010` | `0x0000..0x20DD` | `0x0000..0x6C8B` |
-| recovered, of that region | **90.9%** | **75.3%** | **78.2%** |
-| of the whole file | 29.6% | 30.6% | 51.6% |
+| recovered, of that region | **90.9%** | **75.8%** | **78.2%** |
+| of the whole file | 29.6% | 30.8% | 51.6% |
 
 The whole-file figures are the wrong ones to quote. Two thirds of ParaTrooper
 is a screen-offset table and sprite data; 60% of Zaxxon is artwork. A
@@ -543,10 +565,18 @@ percentage of the whole file measures the game, not the recovery — which is wh
 the tool now trims a large data block from *either* end of the file rather than
 only from the front, and reports both numbers.
 
-Zaxxon needed three separate fixes to get there, and the sequence is the point:
+Zaxxon needed four separate fixes to get there, and the sequence is the point:
 0.1% of the code region → 57.9% once the entry stub behind the banner was
-found → 75.3% once the jump tables were followed. Every one of those figures
-sat alongside `BYTE-IDENTICAL`.
+found → 75.3% once the jump tables were followed → 75.8% once a one-digit
+dispatch address stopped being skipped. Every one of those figures sat
+alongside `BYTE-IDENTICAL`.
+
+Zaxxon's remainder is also fully accounted for, which is the check worth
+copying: every data run of eight bytes or more was matched to an instruction
+naming an address inside it, leaving **zero unexplained** — a banner and two
+runs of alignment zeros are the only bytes nothing points at. "Not recovered as
+instructions" and "not explained" are different claims, and only the first was
+ever true.
 
 Regression fixtures live in `tests/com/`. They are written rather than taken
 from a real game, because games from the period are still under copyright.

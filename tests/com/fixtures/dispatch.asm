@@ -48,10 +48,32 @@ two:
     mov ah, 0x02
     mov dl, 'B'
     int 0x21
+    mov word [low], three       ; the same trick, through a one-digit address
+    call word [low]
     mov ax, 0x4C00
     int 0x21
+
+    db 0x0F, 0xFF, 0xFF         ; blocks the gap sweep a third time
+
+; ---------------------------------------------------------------------------
+; Reached only through a pointer kept at [9] -- inside the program's own PSP,
+; which a .COM is free to use as scratch once it has read the command line.
+; Zaxxon keeps its per-scene collision routine there and calls nine different
+; routines through it.
+;
+; This is a separate case from the two above and it is not a variation on
+; style. Capstone prints a one-digit address without the 0x prefix, so this
+; instruction disassembles as `call word [9]`, and a detector matching only
+; `0x[0-9a-f]+` skips it in silence. That cost Zaxxon nine routines.
+three:
+    mov ah, 0x02
+    mov dl, 'C'
+    int 0x21
+    ret
 
 banner:
     db 'dispatch', 0x0D, 0x0A, '$'
 state:
     dw 0
+
+low equ 9

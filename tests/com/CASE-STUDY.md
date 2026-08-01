@@ -169,7 +169,7 @@ order of when each was written:
 | `farstub.asm` | a `retf` stub splitting the file into two address bases | ParaTrooper |
 | `encodings.asm` | `strict word` recovers an encoding alternate; the rest pin | ParaTrooper |
 | `interrupt.asm` | a handler found by reading `xchg word [es:0x24], ax` | Hard Hat Mack |
-| `dispatch.asm` | `jmp word [var]`, resolved from who writes the pointer | Hard Hat Mack |
+| `dispatch.asm` | `jmp word [var]`, resolved from who writes the pointer — and a third state behind `[9]`, whose one-digit address capstone prints without `0x` | Hard Hat Mack, then Zaxxon |
 | `jmpstub.asm` | the stub is behind a `jmp` over a text banner | Zaxxon |
 | `timer.asm` | the same vector install with no `es:` in it | Zaxxon |
 | `jumptable.asm` | routines reached through a table — and a decoy that must be refused | Zaxxon |

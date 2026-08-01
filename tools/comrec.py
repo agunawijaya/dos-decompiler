@@ -46,6 +46,7 @@ Usage:
 import argparse
 import os
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -181,9 +182,13 @@ def variants(text, has_label):
 
 
 class Reconstructor:
-    def __init__(self, path, segments, entries):
+    def __init__(self, path, segments, entries, image=None):
         self.path = Path(path)
-        self.image = self.path.read_bytes()
+        # `image` overrides what is on disk. An MZ's load image is the file
+        # minus its header, and reconstructing the header as though it were
+        # code is both wrong and, because the result still rebuilds exactly,
+        # silently wrong.
+        self.image = self.path.read_bytes() if image is None else bytes(image)
         self.segments = segments
         self.entries = entries
         self.md = Cs(CS_ARCH_X86, CS_MODE_16)
@@ -558,9 +563,16 @@ class Reconstructor:
 
         Returns [(variable, [file offsets])], and adds each target as an entry.
         """
+        # The `(?:0x)?` is not decoration. Capstone drops the prefix on a
+        # single-digit address, so a program that keeps its dispatch pointer at
+        # `[9]` -- Zaxxon does, and calls nine different routines through it --
+        # produces `call word [9]`, which an 0x-only pattern silently ignores.
+        # The branch-target walk in disassemble() already had this fix; this
+        # pass did not, and the cost was nine routines left in the file as data.
+        ADDR = r"((?:0x)?[0-9a-f]+)"
         wanted = set()
         for off, (sz, text, _) in self.decoded.items():
-            m = re.match(r"^(?:jmp|call) word \[(0x[0-9a-f]+)\]$", text)
+            m = re.match(rf"^(?:jmp|call) word \[{ADDR}\]$", text)
             if m:
                 wanted.add(int(m.group(1), 16))
         if not wanted:
@@ -570,7 +582,7 @@ class Reconstructor:
         for var in sorted(wanted):
             targets = []
             for off, (sz, text, _) in sorted(self.decoded.items()):
-                m = re.match(r"^mov word \[(0x[0-9a-f]+)\], (0x[0-9a-f]+)$", text)
+                m = re.match(rf"^mov word \[{ADDR}\], {ADDR}$", text)
                 if not m or int(m.group(1), 16) != var:
                     continue
                 seg = self.segment_of_file(off)
@@ -1221,6 +1233,45 @@ class Reconstructor:
         return None
 
 
+def mz_load_image(data):
+    """Split an MZ into (header, load image, entry offset), if it is worth it.
+
+    An MZ is normally the other pipeline's business: Ghidra loads it, applies
+    the relocations and hands back segments. But some MZ programs are a `.COM`
+    wearing a header -- one segment, a handful of relocations, hand-written
+    assembly -- and for those the MZ route is strictly weaker. It reaches
+    "readable, probably right". This route reaches a rebuild that is
+    byte-identical and says so.
+
+    Karateka (1984) is the case that prompted this: 87,990 bytes, four
+    relocations, an entry stub that sets DS once and never thinks about
+    segments again. Peeling the header off and treating the image as a .COM
+    with base 0 reconstructed 85.0% of its code region, and the header put back
+    reproduced the shipped .EXE exactly -- SHA-256 checked outside the tool.
+
+    The test is deliberately narrow, because the failure mode of being wrong
+    here is silent. Many relocations mean many segments, and a program that
+    really uses them will not survive being addressed from a single base.
+    """
+    if len(data) < 0x40 or data[:2] not in (b"MZ", b"ZM"):
+        return None
+    hdr_paras = struct.unpack_from("<H", data, 8)[0]
+    nreloc = struct.unpack_from("<H", data, 6)[0]
+    pages = struct.unpack_from("<H", data, 4)[0]
+    last = struct.unpack_from("<H", data, 2)[0]
+    ip = struct.unpack_from("<H", data, 20)[0]
+    cs = struct.unpack_from("<H", data, 22)[0]
+    hdr = hdr_paras * 16
+    end = (pages - 1) * 512 + (last or 512)
+    if not (0 < hdr < len(data)) or end > len(data):
+        return None
+    # More than a few relocations means the program moves between segments,
+    # and a single base is then a wrong answer that still assembles.
+    if nreloc > 8:
+        return None
+    return data[:hdr], data[hdr:end], (cs << 4) + ip
+
+
 def detect_layout(image, md):
     """Find a far transfer in the entry stub and the segment split it implies.
 
@@ -1367,6 +1418,19 @@ def main():
             "https://www.nasm.us/")
 
     image = Path(args.com).read_bytes()
+    mz = mz_load_image(image)
+    if mz is not None:
+        header, image, mz_entry = mz
+        print(f"format      : MZ, {len(header)}-byte header stripped; "
+              f"entry CS:IP -> image offset 0x{mz_entry:X}")
+        print("              a single-segment MZ takes the .COM route, which "
+              "reaches a\n              byte-identical rebuild; the header is "
+              "put back on the way out")
+        if not args.segment:
+            # An MZ image is addressed from 0, not from a PSP at 0x100.
+            args.segment = ["0x0:0x0"]
+        args.entry = list(args.entry) + [str(mz_entry)]
+
     entries = [0] + [int(e, 0) for e in args.entry]
 
     detected = None
@@ -1379,7 +1443,8 @@ def main():
             entries.append(start)
     segments = parse_segments(args.segment, len(image))
 
-    r = Reconstructor(args.com, segments, entries)
+    r = Reconstructor(args.com, segments, entries,
+                      image=image if mz is not None else None)
     source, last, rounds, err = r.run(nasm)
 
     total = len(image)
@@ -1523,6 +1588,16 @@ def main():
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(source, encoding="ascii", errors="replace")
     print(f"\nBYTE-IDENTICAL. wrote {args.out}")
+    if mz is not None:
+        # The claim has to be about the file the user handed over, not about
+        # the image inside it. So write the header out beside the source, with
+        # the one line that reassembles the whole executable.
+        hdr_path = Path(args.out).with_suffix(".mzheader")
+        hdr_path.write_bytes(header)
+        print(f"              wrote {hdr_path.name} ({len(header)} bytes)")
+        print(f"              nasm -f bin -o image.bin {Path(args.out).name}")
+        print(f"              cat {hdr_path.name} image.bin > rebuilt.exe   "
+              f"# and that is the original")
     return 0
 
 

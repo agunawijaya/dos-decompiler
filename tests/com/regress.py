@@ -123,7 +123,11 @@ EXPECTATIONS = {
         40.0,
         ["jmp [0x", "-> 0x",                   # reported, from comrec's output
          "mov dl, 0x41",                       # inside the first state
-         "mov dl, 0x42"],                      # inside the second
+         "mov dl, 0x42",                       # inside the second
+         # Reached through a pointer at [9]. Capstone prints a one-digit
+         # address with no 0x, so an 0x-only pattern skips the instruction
+         # without saying so -- nine routines lost on Zaxxon that way.
+         "mov dl, 0x43"],                      # inside the third
     ),
 }
 
