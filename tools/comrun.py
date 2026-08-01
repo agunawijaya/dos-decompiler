@@ -177,6 +177,15 @@ class Machine:
         # mode, printing a string and reading the clock all have the same
         # effect on what we are measuring: none.
 
+    # A warning about the port reads below, paid for on Zaxxon. Alternating
+    # values keep timing loops moving, which is what they are for -- but a
+    # *joystick* is detected by writing to port 0x201 and counting how long a
+    # bit stays set, and an alternating bit answers that probe successfully.
+    # So an emulated Zaxxon decides a joystick is attached, ignores the
+    # keyboard queue, and plays a different game from the one you asked for.
+    # The state it reaches is real, it is simply not the state a keyboard
+    # player reaches. Check the flags byte before trusting a captured frame.
+
     def _on_in(self, uc, port, size, _=None):
         """Value for an IN instruction.
 
