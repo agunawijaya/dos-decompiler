@@ -347,6 +347,31 @@ class Machine:
         if ah == 0x02:                      # print one character
             self.output.append(chr(uc.reg_read(UC_X86_REG_DX) & 0xFF))
             return
+        if ah in (0x06, 0x07, 0x08, 0x0B):
+            # Console I/O. AH=06h with DL=FF is the classic non-blocking key
+            # check: a character in AL with ZF clear, or nothing with ZF set.
+            #
+            # Answering it as a generic success is worse than not answering at
+            # all. Karateka's start-up is `call check_key / jne again`, so a
+            # handler that leaves ZF alone spins forever -- three million
+            # iterations of six instructions, no output, black screen. It looks
+            # like a hang and is a question nobody answered.
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            if ah == 0x06 and (dx & 0xFF) != 0xFF:
+                self.output.append(chr(dx & 0xFF))
+                return
+            if self.keys:
+                ch = self.keys.pop(0) & 0xFF
+                self.keys_read += 1
+                uc.reg_write(UC_X86_REG_AX,
+                             (uc.reg_read(UC_X86_REG_AX) & 0xFF00) | ch)
+                flags &= ~ZF
+            else:
+                uc.reg_write(UC_X86_REG_AX,
+                             uc.reg_read(UC_X86_REG_AX) & 0xFF00)
+                flags |= ZF
+            uc.reg_write(UC_X86_REG_EFLAGS, flags)
+            return
         if ah == 0x30:                      # get DOS version
             # A program that asks and is told 0 concludes it is on DOS 1 and
             # refuses to run. Karateka does exactly that, in its first twenty
