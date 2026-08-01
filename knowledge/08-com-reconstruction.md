@@ -267,6 +267,36 @@ It matters for reading. The structure is the 6502 program's, short routines and
 memory-heavy code reflect a processor with almost no registers, and odd
 sequences are artefacts rather than intent.
 
+## Looking at the data
+
+A reconstruction can be byte-perfect and still be misunderstood. `comrec.py`
+proves the *source* is right. It says nothing about whether the region you have
+labelled "sprites" is sprites, and a wrong answer there is expensive: a port
+built on it fails only after the artwork goes on screen.
+
+`tools/gfxdump.py` is the cheap check. Decode the bytes as CGA pixels, write a
+PNG, and look. Shapes mean the region and the format are both right; noise
+means one of them is wrong, and you know within a minute.
+
+Two things make it work in practice.
+
+**Byte histograms identify artwork before anything is decoded.** A region whose
+commonest values are `0xAA`, `0x55`, `0xFF` and `0xF0` is almost certainly
+graphics: in CGA's two-bits-per-pixel format those are solid runs of one
+colour, which is what sprites are mostly made of.
+
+**Wrong widths shear the picture diagonally**, unmistakably, so `--sheet`
+renders the same bytes at several widths and lets the eye pick. Better still,
+some games store the size in the data -- Hard Hat Mack writes
+`[width_bytes, height_rows]` ahead of every sprite, which is why its pointer
+table steps by 66 for a 4x16 and 34 for a 4x8. `--self-sized` reads that.
+
+**Expect mirrored data.** Hard Hat Mack's sprites decode as horizontal mirrors
+of themselves, presumably because the blitter walks backwards. The tell was its
+Electronic Arts logo: unreadable until flipped, unmistakable after. If a sheet
+looks like plausible shapes drawn by someone holding the paper to a mirror,
+pass `--mirror`.
+
 ## A measurement that does not work
 
 Pins look stale. Each is decided in one round against a program that later
