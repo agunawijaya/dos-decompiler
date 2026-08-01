@@ -3,9 +3,10 @@
 regress.py -- Check that comrec.py still rebuilds .COM files exactly.
 
 The claim comrec makes is narrow and absolute: the .asm it writes assembles
-back to a file identical to the one it read. That is rung 1 of the
-verification ladder in knowledge/05-verification.md -- not "looks right", not
-"behaves the same", but the same bytes. A test either confirms it or the tool
+back to a file identical to the one it read. That is rung 1b of the
+verification ladder in knowledge/07-extended-reconstruction.md -- the whole
+linked image, not per-function comparison; not "looks right", not "behaves the
+same", but the same bytes. A test either confirms it or the tool
 is broken, so this suite reassembles every fixture with NASM and compares
 SHA-256.
 

@@ -99,6 +99,13 @@ This toolkit lives on rung 3 and had never articulated the others. Rungs 1 and
 2 are what `knowledge/05-prior-art.md` points at; rung 4 is what a port should
 be held to.
 
+> The ladder has since been refined — rung 1 split into 1a/1b, and rung 3b
+> added — after the Contraptions reconstruction finished and reported what its
+> per-function comparison had been unable to see. The current version is in
+> `07-extended-reconstruction.md`; the reason is in
+> `09-lessons-from-contrap.md`. The five-rung version is kept here because this
+> file is a record of what was learned when.
+
 Two supporting details from that plan, both transferable:
 
 - **Assets faithful by construction, not by effort.** The port reads the

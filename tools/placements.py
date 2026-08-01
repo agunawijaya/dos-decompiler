@@ -18,6 +18,15 @@ handling the two shapes that actually occur:
 Anything it cannot parse is reported rather than skipped, because a screen that
 is silently missing a girder looks fine and is wrong.
 
+The number to read is `coverage()`: the fraction of drawing calls reached in
+the build routine's call tree that the extractor could turn into a placement.
+A rendered screen on its own is rung 5 -- "looks right" proves nothing. The
+fraction explained is a falsifiable claim about the same picture: it says how
+much of what the program would have drawn is accounted for, and it goes down
+when the extractor is wrong, which "looks right" never does. The framing is
+borrowed from the CONTRAP reconstruction (knowledge/09-lessons-from-contrap.md),
+where the equivalent number was 197/197 blits explained.
+
 It is deliberately not an emulator. It recognises a handful of idioms and
 refuses the rest -- which keeps the output something you can check by reading,
 and keeps "the program was never run" true.
@@ -48,6 +57,8 @@ class Extractor:
         self.image = rec.image
         self.unparsed = []
         self.out_guard = []
+        self.sites = 0          # drawing calls reached
+        self.explained = 0      # ...of which produced at least one placement
 
     def routine(self, start, limit=300):
         out, j = [], self.idx.get(start)
@@ -178,7 +189,10 @@ class Extractor:
 
             if t.startswith("call") and g is not None:
                 if g in self.drawers:
+                    self.sites += 1
                     got = self.emit(state, o)
+                    if got:
+                        self.explained += 1
                     self.out_guard += got
                     out += got
                     state["col"] = state["row"] = None
@@ -208,6 +222,16 @@ class Extractor:
             return []
         return [(sel, s["col"], s["row"])]
 
+    def coverage(self):
+        """(explained, reached, fraction) over the drawing calls in the tree.
+
+        Reached, not total: a drawing call inside a routine the walker never
+        enters is not counted, so this is an upper bound on how complete the
+        screen is, never a lower one. Say which you are quoting.
+        """
+        return (self.explained, self.sites,
+                self.explained / self.sites if self.sites else 0.0)
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -235,7 +259,10 @@ def main():
                    [int(x, 16) for x in args.drawers.split(",")])
     places = ex.walk(int(args.builder, 16))
 
+    got, reached, frac = ex.coverage()
     print(f"{len(places)} placements from builder {args.builder}")
+    print(f"drawing calls explained: {got}/{reached} ({frac * 100:.1f}%) "
+          f"of those reached")
     for sel, c, r in places:
         print(f"  sprite {sel:>3}  col {c:>3}  row {r:>3}")
     if ex.unparsed:

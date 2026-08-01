@@ -156,8 +156,28 @@ the program is hand-written assembly.
 EXEPACK's entry point is read from its own header and is exact. Other formats do
 not state theirs, so the dumped header's entry is set to 0 deliberately — a
 wrong entry point sends the disassembler into the middle of a routine and
-everything after inherits the error. Use `anchors.py` to find `main`
-structurally instead.
+everything after inherits the error.
+
+If the program was written in C and you have the compiler's library, recover it
+instead of guessing:
+
+```
+python tools/libscan.py unpacked.exe --lib SLIBC.LIB
+```
+
+The startup module of a C runtime declares the entry point in its MODEND
+record. `libscan.py` matches library modules against the image with the FIXUPP
+relocation slots as wildcards, and reads the entry point out of the one that
+matched — measured exact on four binaries across two compilers, including a
+packed-and-dumped one, without ever reading the MZ header
+(`tests/libscan/CASE-STUDY.md`). Scanned with the wrong compiler's library it
+reports nothing rather than something plausible, so a match is meaningful.
+
+The same run tells you which compiler it is, bounds the runtime region so it
+can be excluded from matching, and names the runtime's functions from the
+archive's PUBDEF records. Do it early; it removes work rather than adding it.
+
+Without the library, use `anchors.py` to find `main` structurally instead.
 
 ---
 
@@ -185,11 +205,17 @@ Say which rung of the verification ladder the result will sit on:
 
 | Rung | Oracle | Proves |
 |---|---|---|
-| 1 | byte-identical rebuild | the source is right |
+| 1a | byte-identical **functions**, relocation slots wildcarded | each function's code is right — **not** which symbols it references |
+| 1b | byte-identical **linked image** | the source is right |
 | 2 | instruction-identical, layout-tolerant — `bindiff.py` | the code is right |
-| 3 | per-function behavioural equivalence — `emuverify.py` | this function is that function |
+| 3a | per-function behavioural equivalence — `emuverify.py` | this function is that function |
+| 3b | instruction-trace equivalence under identical input | control flow is the same, and a divergence localises to one instruction |
 | 4 | pixel-identical frames under identical input | the program behaves the same |
 | 5 | "looks right" | nothing |
+
+Do not report 1a as 1b. A per-function comparison must wildcard relocation
+slots, so a function that references the wrong symbol still compares as
+identical; only the linked image catches it.
 
 ---
 

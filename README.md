@@ -75,7 +75,8 @@ flowchart TD
     A["a game folder"] --> S["survey.py<br/><i>which file is the game?</i>"]
     S --> T["triage.py<br/><i>is that one in scope?</i>"]
     T -->|packed| U["unpack.py<br/><i>run the decompressor</i>"]
-    U --> T
+    U --> LS["libscan.py<br/><i>recover the entry point</i>"]
+    LS --> T
     T -->|"interpreted engine<br/>overlaid<br/>protected mode"| X["stop — wrong tool<br/>see knowledge/00-scope.md"]
     T -->|".COM"| C["comrec.py<br/><i>rebuild and prove it</i>"]
     C --> CB["game.asm<br/><i>reassembles byte-identical</i>"]
@@ -231,13 +232,21 @@ say so.
 
 | Rung | Oracle | Proves |
 |---|---|---|
-| 1 | byte-identical rebuild | the source is right |
+| 1a | byte-identical **functions**, relocation slots wildcarded | each function's code is right — **not** which symbols it references |
+| 1b | byte-identical **linked image** | the source is right |
 | 2 | instruction-identical, layout-tolerant — `bindiff.py` | the code is right |
-| 3 | per-function behavioural equivalence — `emuverify.py` | this function is that function |
+| 3a | per-function behavioural equivalence — `emuverify.py` | this function is that function |
+| 3b | instruction-trace equivalence under identical input | control flow is the same, and a divergence localises to one instruction |
 | 4 | pixel-identical frames under identical input | the program behaves the same |
 | 5 | "looks right" | **nothing** |
 
-For MZ executables, rung 1 is the goal of a long reconstruction loop. For
+1a and 1b were one rung until a reconstruction that reported every function
+byte-identical turned out to reference the wrong globals in four of them — an
+error per-function comparison cannot see, because the bytes that carry a symbol
+reference are exactly the bytes it has to wildcard. Compare the linked image,
+from the first link.
+
+For MZ executables, rung 1b is the goal of a long reconstruction loop. For
 `.COM` files it is where you start — see below.
 
 ---
@@ -752,6 +761,8 @@ tools/
   pipeline.ps1               one command: .EXE in, decompiled C out
   mzinfo.py                  MZ structure, segments, packer and overlay detection
   anchors.py                 identify functions from evidence, with no source
+  libscan.py                 find the C runtime using the compiler's own .LIB,
+                             and recover the entry point a packer discarded
   libsig.py                  recognise C runtime functions and exclude them
   emuverify.py               decide equivalence by running both under emulation
   bindiff.py                 instruction-level diff of a rebuild vs the original
@@ -775,9 +786,11 @@ knowledge/
   06-lessons-from-siblings.md corrections paid for by two sibling reconstructions
   07-extended-reconstruction.md the verified-reconstruction workflow
   08-com-reconstruction.md   the .COM route, which reaches byte-identity in one run
+  09-lessons-from-contrap.md what a reconstruction done without this toolkit taught it
 signatures/                  C runtime fingerprints: MS C 5.0, MS C 5.1, Watcom
 tests/sopwith/               the validation fixture and full case study
 tests/com/                   .COM fixtures, rebuilt byte-identically on every run
+tests/libscan/               entry-point recovery, checked against the MZ header
 AGENTS.md                    the method, for any agent or human
 SKILL.md                     Claude Code wrapper
 env.example.ps1              copy to env.ps1, point at your own tool copies

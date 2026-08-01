@@ -25,15 +25,36 @@ and say so:
 
 | Rung | Oracle | Proves |
 |---|---|---|
-| 1 | byte-identical rebuild | the source is right |
+| 1a | byte-identical **functions**, relocation slots wildcarded | each function's code is right — **not** which symbols it references |
+| 1b | byte-identical **linked image** | the source is right |
 | 2 | **instruction-identical, layout-tolerant** (`bindiff.py`) | the code is right |
-| 3 | per-function behavioural equivalence (`emuverify.py`) | this function is that function |
+| 3a | per-function behavioural equivalence (`emuverify.py`) | this function is that function |
+| 3b | instruction-trace equivalence under identical input | control flow is the same, and a divergence localises to one instruction |
 | 4 | pixel-identical frames under identical input | the program behaves the same |
 | 5 | "looks right" | nothing |
 
-The standard workflow reaches rung 3 at best. The extended workflow targets
-rung 2, and rung 1 if the original toolchain is available and configured
+The standard workflow reaches rung 3a at best. The extended workflow targets
+rung 2, and rung 1b if the original toolchain is available and configured
 identically.
+
+**1a and 1b are not the same rung, and the gap between them is a blind spot.**
+Inside an `.OBJ` the addresses in relocation slots are not filled in yet, so a
+per-function comparison has to treat those bytes as wildcards — which means
+code referencing the *wrong symbol* still compares as identical. The
+reconstruction of CONTRAP.EXE reported 83/83 functions byte-identical and then
+found 24 differing bytes, in four of those same functions, once the image was
+linked. All 24 were symbol-identity errors. Compare the linked image from the
+first successful link, not at the end. `09-lessons-from-contrap.md` has the
+detail.
+
+A `.COM` reconstruction (`comrec.py`) is rung 1b by construction: there is no
+linker, and the artefact compared *is* the whole image.
+
+**Rung 3b** is worth reaching for before 4, not after. Frame comparison tells
+you the program misbehaved; trace comparison tells you where. The case that
+argues for it: a reconstruction whose data group began four bytes off a
+paragraph boundary ran and exited cleanly, drawing nothing. Frame comparison
+reported only "nothing was drawn"; the trace comparison found the instruction.
 
 Rung 4 is the right target when byte-identity is out of reach — a packed
 original, a lost compiler, or a deliberate port to a modern language. It is
