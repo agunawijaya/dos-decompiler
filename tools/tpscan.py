@@ -100,6 +100,41 @@ def find_system_init(img):
     return {"at": m.start(), "dgroup": dgroup, "prefixseg_var": prefixseg}
 
 
+def pascal_strings(img, lo, hi, minlen=6, limit=None):
+    """Length-prefixed strings inside one segment.
+
+    This is what turns a segment list into a *named* segment list, and it is
+    the cheapest useful thing in the file. A Pascal string is a length byte
+    followed by that many characters, so the scan is exact rather than
+    heuristic -- no minimum-run guessing, no false hits inside code.
+
+    A unit's strings say what the unit is, immediately and without ambiguity.
+    On The Oregon Trail one segment holds the main menu and `Miles traveled:`,
+    another holds `Points for arriving in Oregon`, another holds
+    `OTMCGA.PCL` and `PAL.256`, and another holds
+    `BGI Error: Graphics not initialized` -- which is Borland's Graph unit
+    identifying itself. Five of that program's eleven segments were named this
+    way in one pass.
+
+    The segments with *no* strings are informative too: a library is code
+    without messages, and application code is not.
+    """
+    out = []
+    i = lo
+    while i < hi - 1:
+        n = img[i]
+        if minlen <= n <= 200 and i + 1 + n <= hi:
+            body = img[i + 1:i + 1 + n]
+            if all(0x20 <= c < 0x7F for c in body):
+                out.append((i, body.decode("ascii")))
+                if limit and len(out) >= limit:
+                    return out
+                i += 1 + n
+                continue
+        i += 1
+    return out
+
+
 def far_targets(img, load_seg):
     """Every far call and far jump with a literal, in-image destination."""
     calls = collections.Counter()
@@ -176,6 +211,10 @@ def main():
                     help="segment the image's relocations were applied at "
                          "(unpack.py uses 0x1000; an unpacked file may use 0)")
     ap.add_argument("--json")
+    ap.add_argument("--strings", type=int, nargs="?", const=3, default=0,
+                    metavar="N",
+                    help="show the first N Pascal strings in each segment -- "
+                         "the fastest way to find out what each unit is")
     args = ap.parse_args()
 
     img, hdr = read_image(args.image)
@@ -221,6 +260,10 @@ def main():
               f"  <- the program itself: called by nobody, entered from the header")
         rows.append({"segment": 0, "start": 0, "size": segs[0] << 4,
                      "calls": 0, "entries": 0, "role": "program"})
+        if args.strings:
+            for _, text in pascal_strings(img, 0, segs[0] << 4,
+                                          limit=args.strings):
+                print(f"        {text[:78]!r}")
     for i, s in enumerate(segs):
         nxt = segs[i + 1] if i + 1 < len(segs) else dgroup
         start, size = s << 4, (nxt - s) << 4
@@ -233,6 +276,13 @@ def main():
             mark = "  <- over 64 KB: a boundary is hidden in here"
         print(f"   {s:#07x} {start:#09x} {size:8,} {calls[s]:7} "
               f"{len(entries[s]):8}{mark}")
+        if args.strings:
+            found = pascal_strings(img, start, start + size,
+                                   limit=args.strings)
+            for _, text in found:
+                print(f"        {text[:78]!r}")
+            if not found:
+                print("        (no strings -- a library, not application code)")
 
     if dropped:
         # Say what was refused and why. A candidate list that silently shrinks
