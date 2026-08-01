@@ -200,6 +200,25 @@ archive's PUBDEF records. Do it early; it removes work rather than adding it.
 
 Without the library, use `anchors.py` to find `main` structurally instead.
 
+### If it is Turbo Pascal
+
+`libscan.py` will find nothing, correctly: TP compiles to `.TPU` units and binds
+its runtime with its own linker, so there is no OMF archive to match. Run this
+instead:
+
+```
+python tools/tpscan.py unpacked.exe
+```
+
+It recognises the compiler from the System unit's initialisation, reports
+`DGROUP` — the code/data boundary, which nothing else recovers for a Pascal
+program — and lists the units, because **every TP unit is its own code segment
+and every call between units is a far call with a literal segment word**. One
+linear scan gives up the module structure of a 200 KB program.
+
+It does not identify the *version*: the runtime error format is identical from
+4.0 to 6.0. See `knowledge/02-compiler-fingerprints.md`.
+
 ---
 
 ## Step 0b — Ask which workflow the user wants

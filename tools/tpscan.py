@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""
+tpscan.py -- Find the structure of a Turbo Pascal program in a DOS image.
+
+Why this exists
+---------------
+`libscan.py` subtracts a C runtime by matching modules out of an OMF `.LIB`,
+with relocation slots wildcarded. It recovers the runtime region, names its
+functions from PUBDEF records, and reads the entry point out of the startup
+module. It is measured exact on four binaries across two compilers.
+
+None of that works on Turbo Pascal. TP does not link OMF libraries; it compiles
+to `.TPU` units and binds its runtime with its own linker, so there is no
+archive to match against and no PUBDEF records to read. Point `libscan.py` at a
+Pascal program and it finds nothing -- correctly, and uselessly.
+
+What replaces it is not a signature database but a *structural* fact, and the
+structural fact is stronger than a database because it needs no reference
+files at all:
+
+    In Turbo Pascal every unit is its own code segment, and every call
+    between units is a far call carrying a literal segment word.
+
+So the set of segments that are far-called *is* the set of units, the offsets
+called into each one are its entry points, and the gaps between consecutive
+segments are their sizes. A 200 KB program gives up its module structure to one
+linear scan, with no symbols and nothing to download.
+
+What it reports, and how sure it is
+-----------------------------------
+Three things, in decreasing order of confidence:
+
+* **Is this Turbo Pascal at all.** The System unit's initialisation has a fixed
+  shape -- set DS to DGROUP, save the PSP from ES, then compute the heap base
+  from SP. That is matched as a byte pattern with the two segment words
+  wildcarded, so it is evidence rather than impression, and it also yields
+  DGROUP, which is the code/data boundary.
+* **The unit segments**, with sizes and call counts.
+* **Which one is the runtime**, from the `Runtime error ` string.
+
+It does *not* identify the compiler *version*, and the reason is worth stating
+rather than leaving as an absence: the runtime error message format is
+identical across 4.0, 5.0, 5.5 and 6.0, and nothing else short of a reference
+build distinguishes them. Version identification needs `.TPU` files to compare
+against, which is the same shape of problem `libscan.py` solves for C and is
+not solved here.
+
+Usage:
+    python tpscan.py IMAGE.EXE
+    python tpscan.py IMAGE.EXE --json units.json
+"""
+
+import argparse
+import collections
+import json
+import re
+import struct
+import sys
+from pathlib import Path
+
+# `unpack.py` dumps memory after the packer's decompressor has applied
+# relocations, so segment words inside the image are absolute at this base.
+# A file that was never packed has no such bias; --load-seg says which.
+DEFAULT_LOAD_SEG = 0x1000
+
+# The Turbo Pascal System unit's first instructions. Two segment words vary
+# between programs, so they are wildcarded:
+#
+#     BA ?? ??        mov dx, DGROUP
+#     8E DA           mov ds, dx
+#     8C 06 ?? ??     mov [PrefixSeg], es      -- ES holds the PSP at entry
+#     33 ED           xor bp, bp
+#     8B C4           mov ax, sp
+#     05 13 00        add ax, 0x13             -- round the stack top up
+#     B1 04           mov cl, 4
+#     D3 E8           shr ax, cl               -- ... to a paragraph
+#     8C D2           mov dx, ss
+#     03 C2           add ax, dx               -- the heap starts here
+SYSTEM_INIT = re.compile(
+    rb"\xBA(..)\x8E\xDA\x8C\x06(..)\x33\xED\x8B\xC4\x05\x13\x00"
+    rb"\xB1\x04\xD3\xE8\x8C\xD2\x03\xC2", re.S)
+
+
+def read_image(path):
+    """Return the load image, skipping an MZ header if there is one."""
+    d = Path(path).read_bytes()
+    if d[:2] in (b"MZ", b"ZM"):
+        hdr = struct.unpack_from("<H", d, 8)[0] * 16
+        return d[hdr:], hdr
+    return d, 0
+
+
+def find_system_init(img):
+    """Locate the System unit and the data segment it sets up."""
+    m = SYSTEM_INIT.search(img)
+    if not m:
+        return None
+    dgroup, prefixseg = (struct.unpack("<H", m.group(1))[0],
+                         struct.unpack("<H", m.group(2))[0])
+    return {"at": m.start(), "dgroup": dgroup, "prefixseg_var": prefixseg}
+
+
+def far_targets(img, load_seg):
+    """Every far call and far jump with a literal, in-image destination."""
+    calls = collections.Counter()
+    entries = collections.defaultdict(set)
+    n = len(img)
+    for i in range(n - 5):
+        op = img[i]
+        if op not in (0x9A, 0xEA):          # call far / jmp far, imm16:imm16
+            continue
+        off, seg = struct.unpack_from("<HH", img, i + 1)
+        if seg < load_seg:
+            continue
+        rel = seg - load_seg
+        if ((rel << 4) + off) >= n:
+            continue
+        calls[rel] += 1
+        entries[rel].add(off)
+    return calls, entries
+
+
+def segments(calls, entries, code_end_para, min_calls=2):
+    """Keep the candidate segments that can actually be segments.
+
+    Two rules, both of them facts about the machine rather than thresholds:
+
+    * an 8086 code segment cannot exceed 64 KB, so two candidates closer than
+      that are both plausible and a lone candidate 64 KB from the next one is
+      hiding a boundary -- reported, not invented;
+    * every offset called into a segment must lie before the next segment
+      starts, or the "segment" is a byte that happened to read 0x9A.
+
+    When those two disagree, one of the pair is wrong and the question is
+    which. **Drop the one with less evidence behind it**, not the one the scan
+    reached first. Getting that backwards costs real units: a stray `0x9A` byte
+    sitting between two genuine segments shrinks the earlier one's apparent
+    span, and a rule that blames the earlier segment deletes a unit with 175
+    calls in favour of a byte with one. It did exactly that here before the
+    tie-break was written down.
+
+    Dropping a candidate changes its neighbours' spans, so this iterates until
+    the set stops changing.
+    """
+    keep = {s for s in calls if calls[s] >= min_calls}
+    # A single call to offset 0 is an initialiser, which is real even when the
+    # unit is never called again.
+    keep |= {s for s in calls if 0 in entries[s]}
+    dropped = []
+    changed = True
+    while changed:
+        changed = False
+        order = sorted(keep)
+        for i, s in enumerate(order):
+            nxt = order[i + 1] if i + 1 < len(order) else code_end_para
+            if not entries[s] or max(entries[s]) < ((nxt - s) << 4):
+                continue
+            # A conflict. The loser is whichever is supported by fewer far
+            # calls; on a tie the later one goes, because the earlier one has
+            # already been vouched for by every entry that fits inside it.
+            victim = s if (i + 1 < len(order) and
+                           calls[s] < calls[order[i + 1]]) else \
+                (order[i + 1] if i + 1 < len(order) else s)
+            keep.discard(victim)
+            dropped.append((victim, calls[victim]))
+            changed = True
+            break
+    return sorted(keep), dropped
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("image")
+    ap.add_argument("--load-seg", default=hex(DEFAULT_LOAD_SEG),
+                    help="segment the image's relocations were applied at "
+                         "(unpack.py uses 0x1000; an unpacked file may use 0)")
+    ap.add_argument("--json")
+    args = ap.parse_args()
+
+    img, hdr = read_image(args.image)
+    load_seg = int(args.load_seg, 0)
+    print(f"image       : {args.image}  ({len(img):,} bytes"
+          + (f", after a {hdr}-byte MZ header" if hdr else "") + ")")
+
+    sysinit = find_system_init(img)
+    if not sysinit:
+        print("\nNot Turbo Pascal, or not a shape this recognises.")
+        print("The System unit's initialisation was not found. That pattern is")
+        print("stable across Turbo Pascal 4.0 to 6.0; a program built with")
+        print("something else will land here, and so will a TP program whose")
+        print("image is incomplete.")
+        return 1
+
+    dgroup = sysinit["dgroup"] - load_seg
+    code_end = dgroup << 4
+    print(f"compiler    : Turbo Pascal  [System unit init at "
+          f"{sysinit['at']:#07x}]")
+    print(f"              version not determined -- see the module docstring")
+    print(f"DGROUP      : {sysinit['dgroup']:#06x}  -> data starts at "
+          f"{code_end:#07x}")
+    print(f"code / data : {code_end:,} bytes of code, "
+          f"{len(img) - code_end:,} bytes of data and stack")
+
+    calls, entries = far_targets(img, load_seg)
+    segs, dropped = segments(calls, entries, dgroup)
+    rt = None
+    err = img.find(b"Runtime error ")
+
+    print(f"\nunits       : {len(segs)} code segments carrying "
+          f"{sum(calls[s] for s in segs):,} far calls")
+    print(f"\n{'segment':>9} {'starts':>9} {'bytes':>8} {'calls':>7} "
+          f"{'entries':>8}  ")
+    rows = []
+    # The program's own code is not in that list and must not be forgotten:
+    # nothing far-calls it, because it is entered from the MZ header and
+    # nowhere else. Its absence from the call graph is the evidence for what it
+    # is, so it is reported rather than left as an unexplained hole.
+    if segs and segs[0] > 0:
+        print(f"   {0:#07x} {0:#09x} {segs[0] << 4:8,} {'-':>7} {'-':>8}"
+              f"  <- the program itself: called by nobody, entered from the header")
+        rows.append({"segment": 0, "start": 0, "size": segs[0] << 4,
+                     "calls": 0, "entries": 0, "role": "program"})
+    for i, s in enumerate(segs):
+        nxt = segs[i + 1] if i + 1 < len(segs) else dgroup
+        start, size = s << 4, (nxt - s) << 4
+        if err >= 0 and start <= err < start + size:
+            rt = s
+        rows.append({"segment": s, "start": start, "size": size,
+                     "calls": calls[s], "entries": len(entries[s])})
+        mark = ""
+        if size > 0x10000:
+            mark = "  <- over 64 KB: a boundary is hidden in here"
+        print(f"   {s:#07x} {start:#09x} {size:8,} {calls[s]:7} "
+              f"{len(entries[s]):8}{mark}")
+
+    if dropped:
+        # Say what was refused and why. A candidate list that silently shrinks
+        # is indistinguishable from one that was right first time.
+        print(f"\nrefused     : {len(dropped)} candidate segments whose called "
+              f"offsets ran past the next one")
+        print("              " + ", ".join(
+            f"{s:#06x} ({c} call{'s' if c != 1 else ''})"
+            for s, c in sorted(dropped)[:12]))
+
+    if rt is not None:
+        row = next(r for r in rows if r["segment"] == rt)
+        print(f"\nruntime     : segment {rt:#06x} holds 'Runtime error ' -- "
+              f"Borland's System unit,")
+        print(f"              {row['size']:,} bytes, "
+              f"{row['calls']:,} far calls into it "
+              f"({row['calls'] * 100 // max(1, sum(calls[s] for s in segs))}% "
+              f"of all calls)")
+        mecc = sum(r["size"] for r in rows if r["segment"] != rt)
+        print(f"              the other {len(rows) - 1} segments total "
+              f"{mecc:,} bytes")
+
+    if args.json:
+        Path(args.json).write_text(json.dumps(
+            {"code_end": code_end, "dgroup": sysinit["dgroup"],
+             "load_seg": load_seg, "runtime_segment": rt, "units": rows},
+            indent=2), encoding="utf-8")
+        print(f"\nwrote {args.json}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
