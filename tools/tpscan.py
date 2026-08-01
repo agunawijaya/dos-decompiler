@@ -135,6 +135,41 @@ def pascal_strings(img, lo, hi, minlen=6, limit=None):
     return out
 
 
+def tpl_match(segment, lib, minrun=16):
+    """How much of `segment` appears verbatim in `lib`, and the longest run.
+
+    This is `libscan.py` for Pascal, and it needed a different shape. For C,
+    `libscan` matches OMF modules with their FIXUPP relocation slots
+    wildcarded, because it knows where the relocations are. A `.TPL` carries no
+    such map, and Turbo Pascal *smart-links* -- unused procedures are dropped
+    and everything after them shifts -- so neither alignment nor whole-module
+    comparison works.
+
+    Coverage does. Take every run of `minrun` bytes or more from the linked
+    runtime that occurs anywhere in the library, and measure what fraction of
+    the segment they cover. Relocated words break runs but only locally, and
+    smart-linked gaps cost nothing because each surviving block is found on its
+    own.
+
+    Returns (bytes covered, longest single run).
+    """
+    covered = bytearray(len(segment))
+    longest = 0
+    i = 0
+    while i < len(segment) - minrun:
+        n = minrun
+        if lib.find(segment[i:i + n]) < 0:
+            i += 1
+            continue
+        while i + n < len(segment) and lib.find(segment[i:i + n + 1]) >= 0:
+            n += 1
+        for k in range(i, i + n):
+            covered[k] = 1
+        longest = max(longest, n)
+        i += n
+    return sum(covered), longest
+
+
 def procedure_shape(img, procs):
     """How many claimed entry points actually look like procedures?
 
@@ -252,6 +287,10 @@ def main():
                     metavar="N",
                     help="show the first N Pascal strings in each segment -- "
                          "the fastest way to find out what each unit is")
+    ap.add_argument("--tpl", action="append", default=[], metavar="TURBO.TPL",
+                    help="a Turbo Pascal runtime library to identify the "
+                         "compiler version against; give several and they are "
+                         "ranked")
     ap.add_argument("--procs", metavar="FILE",
                     help="write every procedure entry point, one image offset "
                          "per line, for feeding to a disassembler")
@@ -350,6 +389,37 @@ def main():
         mecc = sum(r["size"] for r in rows if r["segment"] != rt)
         print(f"              the other {len(rows) - 1} segments total "
               f"{mecc:,} bytes")
+
+    if args.tpl and rt is not None:
+        row = next(r for r in rows if r["segment"] == rt)
+        seg = img[row["start"]:row["start"] + row["size"]]
+        print(f"\nversion     : matching the {row['size']:,}-byte runtime "
+              f"segment against {len(args.tpl)} librar"
+              f"{'ies' if len(args.tpl) > 1 else 'y'}")
+        results = []
+        for path in args.tpl:
+            lib = Path(path).read_bytes()
+            cov, longest = tpl_match(seg, lib)
+            sig = lib[:4].decode("latin-1") if lib[:3] == b"TPU" else "?"
+            results.append((cov, longest, path, sig))
+            print(f"   {Path(path).parent.name}/{Path(path).name:<12} "
+                  f"[{sig}]  {cov * 100 // len(seg):3}% covered, "
+                  f"longest run {longest:,} bytes")
+        results.sort(reverse=True)
+        best, second = results[0], (results[1] if len(results) > 1 else None)
+        # A single library proves nothing on its own: any two Turbo Pascal
+        # runtimes share a great deal. The claim is only worth making when one
+        # library beats the others by a margin, so the margin is what decides
+        # whether this prints an answer or a refusal.
+        if second and best[1] < second[1] * 1.5:
+            print(f"   -> too close to call: {best[1]:,} against "
+                  f"{second[1]:,} bytes. Not stated.")
+        elif second:
+            print(f"   -> {Path(best[2]).parent.name}, on a longest run of "
+                  f"{best[1]:,} bytes against {second[1]:,} for the next")
+        else:
+            print("   -> only one library given; a match here means little "
+                  "without something to compare it to")
 
     procs = sorted({p for r in rows for p in r.get("procs", [])})
     if procs:
