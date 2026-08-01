@@ -258,7 +258,15 @@ class Extractor:
             return True
         m = re.match(r"^mov cl, (0x[0-9a-f]+|\d+)$", t)
         if m:
+            # CL opens the *outer* loop of a nested pair the same way BL opens
+            # the inner one, and by the same tell: the counter is stored to a
+            # variable so the body can decrement it. Missing this collapsed
+            # four floors of girders onto one row -- every column right, every
+            # floor but one absent, and the coverage metric none the wiser.
             state["cx"] = int(m.group(1), 0)
+            state["ccount"] = (state["cx"] + 1
+                               if re.match(r"^mov byte \[0x[0-9a-f]+\], cl$", nxt)
+                               else None)
             return True
         m = re.match(r"^mov bl, (0x[0-9a-f]+|\d+)$", t)
         if m:
@@ -359,8 +367,13 @@ class Extractor:
             return True
         return False
 
-    def resolve(self, state, v, index=None, depth=0):
-        """A tracked value as a number, or None if it is not decided."""
+    def resolve(self, state, v, regs=None, depth=0):
+        """A tracked value as a number, or None if it is not decided.
+
+        `regs` overrides the index registers for one evaluation, which is how a
+        loop is enumerated: the same expression is resolved once per iteration
+        with a different counter, without disturbing the tracked state.
+        """
         if v is None or isinstance(v, int):
             return v
         if depth > 8:
@@ -374,13 +387,14 @@ class Extractor:
             # from the file gives the wrong answer for every screen but the one
             # the file happened to be saved in, so what the builder wrote wins.
             if addr in state["bytes"]:
-                return self.resolve(state, state["bytes"][addr], index, depth + 1)
+                return self.resolve(state, state["bytes"][addr], regs, depth + 1)
             return self.byte(addr)
         if kind == "tab":
+            # Which register indexes the table decides which loop varies it.
             reg = v[2] if len(v) > 2 else "bx"
-            # Only the loop register takes the enumerated index. Any other
-            # index register keeps whatever value it was last given.
-            i = index if (reg == "bx" and index is not None) else state.get(reg)
+            i = (regs or {}).get(reg, state.get(reg))
+            if i is None:
+                i = state.get(reg)
             if i is None:
                 return None
             return self.byte(addr + i)
@@ -403,30 +417,41 @@ class Extractor:
         # but only when something it reads is actually indexed. Repeating a
         # call whose operands are all constants would emit the same sprite N
         # times and inflate the count with copies of one placement.
-        indexed = any(isinstance(v, tuple) and v[0] == "tab" for v in raws)
-        if indexed and s.get("count"):
-            indices = range(s["index"], -1, -1) if s.get("index") is not None \
-                else range(s["count"] - 1, -1, -1)
-        else:
-            indices = [s.get("index")]
+        # Inside a counted loop the same call site places a different sprite on
+        # every iteration, so it is evaluated once per index -- but only for
+        # registers something it reads is actually indexed by. Repeating a call
+        # whose operands are all constants would emit one sprite N times.
+        uses = {v[2] if len(v) > 2 else "bx"
+                for v in raws if isinstance(v, tuple) and v[0] == "tab"}
+
+        def span(reg, count):
+            top = s.get(reg)
+            if reg not in uses or not s.get(count) or top is None:
+                return [top]
+            return range(top, -1, -1)
+
+        inner = span("bx", "count")     # the column counter
+        outer = span("si", "ccount")    # the floor counter, one level out
 
         out, why = [], None
-        for i in indices:
-            sel = self.resolve(s, raws[2], i)
-            if sel is None:
-                why = why or f"no sprite selector in [{tr.sel:#06x}]"
-                continue
-            col = self.resolve(s, raws[0], i)
-            row = self.resolve(s, raws[1], i)
-            if col is None or row is None:
-                why = why or ("column not decided" if col is None
-                              else "row not decided")
-                continue
-            if col == 0xFF or row == 0xFF:
-                continue                      # the table's end marker
-            p = (sel, col, row, tr.scale)
-            if p not in out:
-                out.append(p)
+        for j in outer:
+            for i in inner:
+                over = {"bx": i, "si": j}
+                sel = self.resolve(s, raws[2], regs=over)
+                if sel is None:
+                    why = why or f"no sprite selector in [{tr.sel:#06x}]"
+                    continue
+                col = self.resolve(s, raws[0], regs=over)
+                row = self.resolve(s, raws[1], regs=over)
+                if col is None or row is None:
+                    why = why or ("column not decided" if col is None
+                                  else "row not decided")
+                    continue
+                if col == 0xFF or row == 0xFF:
+                    continue                  # the table's end marker
+                p = (sel, col, row, tr.scale)
+                if p not in out:
+                    out.append(p)
         if not out:
             self.unparsed.append((site, why or "nothing resolved"))
         return out
