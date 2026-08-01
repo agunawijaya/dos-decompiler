@@ -44,7 +44,10 @@ Note the entry point is *read*, not assumed. The MODEND record names a segment
 and a displacement; the CONTRAP agent inferred "offset 0 of the startup
 module's code segment" from one compiler, and for Microsoft C 5.0 that is
 indeed what the record says -- but it is a field, so there is no need to
-assume it.
+assume it. Exactly one module sets the flag in each library checked (CRT0 out
+of 302 in MS C 5.0, dos\\crt0.asm out of 303 in MS C 5.1, cstart out of 1,218
+in Open Watcom), so it identifies the startup module as well as locating the
+entry point inside it.
 
 Usage:
     python libscan.py IMAGE.EXE --lib SLIBC.LIB

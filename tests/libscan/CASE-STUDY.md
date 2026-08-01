@@ -24,7 +24,11 @@ Blank those and the signature is exact. Two further things fall out:
 
 - **MODEND.** Exactly one module in a C runtime — the startup module — sets the
   "start address" flag in its MODEND record and names a segment and a
-  displacement. That is the entry point, as a field, not an inference.
+  displacement. That is the entry point, as a field, not an inference. Checked
+  across the three libraries here: `CRT0` alone out of 302 modules in MS C 5.0,
+  `dos\crt0.asm` alone out of 303 in MS C 5.1, `cstart` alone out of 1,218 in
+  Open Watcom. So the flag also *finds* the startup module, without needing to
+  know its name.
 - **PUBDEF.** Every module lists its public symbols and their offsets, so a
   match does not just say "runtime code here", it says `_strncmp`.
 
