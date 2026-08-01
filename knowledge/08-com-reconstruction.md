@@ -193,7 +193,100 @@ both numbers on the line there is nothing connecting them. `comrec.py` reads
 the `add ax, imm / mov ds, ax` idiom at the start of the code and annotates
 every data row with both.
 
-## What this does not give you
+## Entry points the hardware calls
+
+Recursive descent finds what the program branches to. An **interrupt handler**
+is reached by neither branch nor call: the hardware jumps to it. So a game that
+takes over the keyboard or the timer hides a whole routine from the walk, and
+the disassembler records it as data without complaint.
+
+The install is readable. The vector table is at absolute address 0, so the
+program points a segment register at zero and writes a far pointer into slot
+`vector * 4`:
+
+```nasm
+    xor ax, ax
+    mov es, ax                  ; ES -> the vector table
+    lea ax, [0x171]             ; handler offset
+    mov bx, cs                  ;   and segment
+    xchg word [es:0x24], ax     ; 0x24 / 4 = vector 9, the keyboard
+    xchg word [es:0x26], bx
+```
+
+`xchg` rather than `mov` because the program wants the old vector back, to chain
+to or to restore on exit — so an `xchg` against a low, four-byte-aligned `es:`
+offset is itself a good signal.
+
+`comrec.py` reads this and adds the handler as an entry point, reporting:
+
+```
+interrupts  : INT 09h -> file 0x00071
+```
+
+**Hard Hat Mack's handler was recovered before this existed** — but by the gap
+sweep, which accepted it because its bytes happened to decode cleanly and land
+exactly on the boundary. That is luck. A handler containing one
+implausible-looking opcode, or sitting in a gap that does not end where it does,
+would have been lost silently. `tests/com/fixtures/interrupt.asm` is built so
+the sweep *cannot* rescue it, which is what makes the test meaningful.
+
+## Provenance: was this written, or generated?
+
+Before asking why code is shaped a certain way, establish what shaped it. A
+tool's output follows the tool's rules, and those rules show up as a pattern
+repeated far more often than any person would repeat it.
+
+Hard Hat Mack contains **391 `cmc` instructions**. `cmc` complements the carry
+flag; most programs contain none. Counted across the whole disassembly:
+
+| | |
+|---|---|
+| directly after a `cmp` or `sub` | **99%** |
+| share of all compares followed by one | **91%** |
+| followed within 3 instructions by anything reading carry | 37% |
+
+`CMP` and `SUB` set carry to record a borrow, and the 6502 and the 8088 define
+it in opposite directions: on the 6502 carry is set when there is *no* borrow.
+Code moved from one to the other must flip the carry after every compare, or
+every dependent branch inverts.
+
+So a carry-flip after 91% of compares, most of them never read, is not a style.
+It is an **adapter emitted unconditionally by a translator** — the IBM version
+was mechanically converted from the Apple II 6502 source, not rewritten. The
+63% that are dead are the proof: a person flips the carry where it matters.
+
+`comrec.py` reports this and stays silent on hand-written x86:
+
+```
+provenance  : mechanically translated from 6502
+              391 cmc, 99% of them straight after a cmp/sub, covering 91% of
+              all compares -- a carry-convention adapter, not hand-written x86
+```
+
+It matters for reading. The structure is the 6502 program's, short routines and
+memory-heavy code reflect a processor with almost no registers, and odd
+sequences are artefacts rather than intent.
+
+## A measurement that does not work
+
+Pins look stale. Each is decided in one round against a program that later
+rounds change — the sweep turns data into code, labels appear where a `db` run
+used to be. The obvious improvement is to release them all once the structure
+settles and keep only those that still fail.
+
+It was implemented, measured, and removed.
+
+Releasing every pin on Hard Hat Mack produces a rebuild **two bytes shorter**,
+because `and ax, 0x2324` sits in the file as the 4-byte ModR/M form while NASM
+emits the 3-byte accumulator form. Every displacement after each shrink is then
+wrong, so 337 `call` instructions report a mismatch they had nothing to do with
+— and the measurement says 691 instructions are mis-encoded when the truth is
+646.
+
+**Pins cannot be evaluated in bulk, because releasing one moves the instructions
+after it.** The one-at-a-time loop is not a crude approximation of something
+better; it is the only measurement that means anything. The note stays in
+`comrec.py` so nobody spends a day on it twice.
 
 C. ParaTrooper has no stack-frame prologues anywhere — it was written in
 assembly, so there is no C source to recover and no amount of work will produce

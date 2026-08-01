@@ -70,6 +70,17 @@ EXPECTATIONS = {
         ["strict word",                        # long immediate form recovered
          "; mov dx, ax"],                      # direction-bit alternate pinned
     ),
+    # An interrupt handler is reachable only through the vector table. Nothing
+    # branches to it, so recursive descent cannot find it and the gap sweep is
+    # deliberately blocked from rescuing it -- see the fixture. These three
+    # instructions coming back as code means the vector install was read.
+    "interrupt": (
+        45.0,
+        ["INT 09h -> file",                    # reported, from comrec's output
+         "in al, 0x60",                        # inside the handler
+         "out 0x20, al",                       # the end-of-interrupt
+         "iret"],
+    ),
 }
 
 

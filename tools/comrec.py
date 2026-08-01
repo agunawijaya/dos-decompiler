@@ -165,7 +165,11 @@ def variants(text, has_label):
     if has_label:
         mn, _, rest = text.partition(" ")
         out.append(f"{mn} strict near {rest}")
-        out.append(f"{mn} strict short {rest}")
+        # There is no short form of CALL on x86 -- only jumps have one. Offering
+        # it wastes a round and then reports "mismatch in operand sizes", which
+        # reads like an encoding problem rather than an impossible instruction.
+        if mn != "call":
+            out.append(f"{mn} strict short {rest}")
         return out
 
     m = re.match(r"^(\w+)\s+([^,]+),\s*(-?0x[0-9a-fA-F]+|-?\d+)$", text)
@@ -230,6 +234,108 @@ class Reconstructor:
                     break
                 off += e[0]
         return
+
+    def detect_interrupt_handlers(self):
+        """Find code the program installs in the interrupt vector table.
+
+        An interrupt handler is an entry point that nothing branches to. The
+        hardware calls it. Recursive descent therefore cannot reach it, and a
+        game that takes over the keyboard or the timer hides a whole routine
+        from the disassembler that way.
+
+        The install is recognisable. The vector table lives at absolute address
+        0, so the program points a segment register at zero and writes a
+        far pointer into slot `vector * 4`:
+
+            xor ax, ax
+            mov es, ax                  ; ES -> the vector table
+            lea ax, [0x171]             ; handler offset
+            mov bx, cs                  ; handler segment
+            xchg word [es:0x24], ax     ; 0x24 / 4 = vector 9, the keyboard
+            xchg word [es:0x26], bx
+
+        `xchg` rather than `mov` because the program wants the old vector back
+        to chain to, or to restore on exit.
+
+        Hard Hat Mack's keyboard handler *was* recovered before this existed --
+        but by the gap sweep, which accepted it because its bytes happened to
+        decode cleanly and land on the boundary. That is luck, not method: a
+        handler containing one implausible-looking opcode, or sitting in a gap
+        that does not end where it does, is silently lost. Reading the install
+        makes it deliberate.
+
+        Returns [(vector, file_offset)], and adds each to the entry points.
+        """
+        found = []
+        pending = None            # (register, address) most recently loaded
+        for off, (sz, text, _) in sorted(self.decoded.items()):
+            m = re.match(r"^(?:lea (\w+), \[(0x[0-9a-f]+)\]"
+                         r"|mov (\w+), (0x[0-9a-f]+))$", text)
+            if m:
+                reg = m.group(1) or m.group(3)
+                val = int(m.group(2) or m.group(4), 16)
+                pending = (reg, val)
+                continue
+
+            w = re.match(r"^(?:mov|xchg) word \[es:(0x[0-9a-f]+)\], (\w+)$", text)
+            if w and pending:
+                slot = int(w.group(1), 16)
+                # Offsets live in the low word of a slot; the high word is the
+                # segment, which is always CS here and tells us nothing.
+                if slot < 0x400 and slot % 4 == 0 and w.group(2) == pending[0]:
+                    seg = self.segment_of_file(off)
+                    if seg is not None and seg.contains_addr(pending[1]):
+                        target = seg.file_off(pending[1])
+                        found.append((slot // 4, target))
+                        if target not in self.extra:
+                            self.extra.add(target)
+                            self.labels.add(target)
+                pending = None
+        return found
+
+    def detect_provenance(self):
+        """Look for signs the code was machine-translated from another CPU.
+
+        On the 6502, `CMP` and `SBC` set carry to mean *no borrow*: C = 1 when
+        A >= operand. On x86, `CMP` and `SUB` set CF to mean *borrow*: CF = 1
+        when dest < src. The two conventions are exact opposites, so 6502 code
+        moved to x86 mechanically has to flip the carry after every compare and
+        subtract to keep its own branches correct.
+
+        One instruction does that: `cmc`. Finding it after almost every `cmp`
+        is not a style; it is an adapter, emitted unconditionally by a
+        translator that never checked whether the carry was going to be read.
+        A human porting by hand flips the carry only where it matters.
+
+        Hard Hat Mack (1983) shows it plainly: 391 `cmc`, 99% of them directly
+        after a `cmp` or `sub`, covering 93% of every compare in the program --
+        and only 37% anywhere near an instruction that consumes carry. The
+        other 63% are dead, which is the tell.
+
+        Knowing this changes how the disassembly should be read: the structure
+        is the 6502 original's, not an x86 programmer's, and the dead flag
+        operations are noise rather than meaning.
+
+        Returns a list of (finding, evidence) pairs.
+        """
+        out = []
+        ins = sorted(self.decoded.items())
+        idx = {o: i for i, (o, _) in enumerate(ins)}
+        cmc = [o for o, (_, t, _) in ins if t == "cmc"]
+        cmps = [o for o, (_, t, _) in ins if t.split()[0] in ("cmp", "sub")]
+        if len(cmc) >= 20 and cmps:
+            after_cmp = sum(1 for o in cmc
+                            if idx[o] > 0
+                            and ins[idx[o] - 1][1][1].split()[0] in ("cmp", "sub"))
+            share = after_cmp / len(cmc)
+            covered = after_cmp / len(cmps)
+            if share > 0.85 and covered > 0.5:
+                out.append((
+                    "mechanically translated from 6502",
+                    f"{len(cmc)} cmc, {share:.0%} of them straight after a "
+                    f"cmp/sub, covering {covered:.0%} of all compares -- a "
+                    f"carry-convention adapter, not hand-written x86"))
+        return out
 
     def coverage(self):
         """Bytes claimed by instructions that survived verification."""
@@ -551,7 +657,20 @@ class Reconstructor:
 
     @staticmethod
     def parse_listing(path):
-        """{source line index (0-based): emitted bytes} from a NASM listing."""
+        """{source line index (0-based): emitted bytes} from a NASM listing.
+
+        A line that emits more than nine bytes is printed across several
+        listing rows carrying the same source line number, the earlier ones
+        ending in `-`:
+
+            50 00000060 BC1809FBE46124FEE6-   db 0xBC, 0x18, ...
+            50 00000069 61B80400CD10EB
+
+        Assigning rather than appending keeps only the tail, so a sixteen-byte
+        row reads back as seven bytes. No instruction is long enough to hit
+        this, which is why it went unnoticed -- but any check extended to data
+        rows would have been quietly comparing the wrong bytes.
+        """
         out = {}
         for raw in path.read_text(encoding="latin-1",
                                   errors="replace").splitlines():
@@ -559,12 +678,14 @@ class Reconstructor:
             if not m:
                 continue
             hexpart = m.group(3)
-            if len(hexpart) % 2:            # NASM marks continuations with '-'
+            if len(hexpart) % 2:
                 hexpart = hexpart[:-1]
             try:
-                out[int(m.group(1)) - 1] = bytes.fromhex(hexpart)
+                chunk = bytes.fromhex(hexpart)
             except ValueError:
                 continue
+            li = int(m.group(1)) - 1
+            out[li] = out.get(li, b"") + chunk
         return out
 
     def first_mismatch(self, built):
@@ -583,12 +704,32 @@ class Reconstructor:
                 return start
         return None
 
+    # A note on an idea that does not work, so nobody spends a day on it twice.
+    #
+    # The pins look stale: each is decided in one round against a program that
+    # later rounds change. The obvious improvement is to release them all once
+    # the structure settles and keep only those that still fail.
+    #
+    # Measuring it says otherwise. Release every pin on Hard Hat Mack and the
+    # rebuild comes out *two bytes shorter*, because `and ax, 0x2324` sits in
+    # the file as the 4-byte modrm form and NASM emits the 3-byte accumulator
+    # form. Every displacement after each shrink is then wrong, so 337 `call`
+    # instructions report a mismatch they are not responsible for.
+    #
+    # Pins cannot be evaluated in bulk: releasing one moves the instructions
+    # after it. The one-at-a-time loop already in run() is not a crude version
+    # of a better algorithm -- it is the only measurement that means anything.
+
     def run(self, nasm, max_rounds=40):
         rounds = 0
         while rounds < max_rounds:
             rounds += 1
             self.disassemble()
             self.detect_ds_bias()
+            # Handlers are entry points nothing branches to, so they have to be
+            # discovered before the walk can be considered complete.
+            if self.detect_interrupt_handlers() and rounds == 1:
+                self.disassemble()
             source, line_map = self.emit(with_map=True)
             built, err, listing = self.assemble(source, nasm, want_listing=True)
 
@@ -821,6 +962,13 @@ def main():
     print(f"segments    : " + ", ".join(
         f"0x{s.file_start:04X}+ @ base 0x{s.base:04X}" for s in segments)
         + ("   (detected from the entry stub)" if detected else ""))
+    handlers = r.detect_interrupt_handlers()
+    if handlers:
+        print("interrupts  : " + ", ".join(
+            f"INT {v:02X}h -> file 0x{o:05X}" for v, o in sorted(set(handlers))))
+    for finding, evidence in r.detect_provenance():
+        print(f"provenance  : {finding}")
+        print(f"              {evidence}")
     print(f"rounds      : {rounds}")
     print(f"instructions: {len(r.decoded):,} disassembled "
           f"({len(r.demoted):,} pinned to fixed bytes to preserve encoding)")
