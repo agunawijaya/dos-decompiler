@@ -135,6 +135,43 @@ def pascal_strings(img, lo, hi, minlen=6, limit=None):
     return out
 
 
+def procedure_shape(img, procs):
+    """How many claimed entry points actually look like procedures?
+
+    Returns (with a stack frame, plausible at all). A Turbo Pascal procedure
+    that has parameters or locals opens `push bp / mov bp, sp`; a leaf with
+    neither does not, so the frame count is a floor rather than a target.
+
+    The value of the second number is that it audits the *segment* detection.
+    These offsets were derived from far-call operands; if a segment boundary
+    were wrong, the offsets would be measured from the wrong base and would
+    land in the middle of instructions, and the plausible count would fall
+    apart. It holding up is evidence for the whole reading.
+    """
+    try:
+        from capstone import Cs, CS_ARCH_X86, CS_MODE_16
+    except ImportError:
+        return 0, 0
+    md = Cs(CS_ARCH_X86, CS_MODE_16)
+    # Openings a compiler emits, or that a hand-written leaf plausibly starts
+    # with. Anything else at a called address means something is off.
+    OPENERS = {"push", "sub", "mov", "xor", "les", "lea", "cld", "inc", "dec",
+               "cmp", "call", "jmp", "test", "or", "and", "add", "pop", "in",
+               "out", "sti", "cli", "lodsb", "lodsw", "ret", "retf", "nop"}
+    framed = plausible = 0
+    for p in procs:
+        ins = list(md.disasm(bytes(img[p:p + 8]), p))
+        if not ins:
+            continue
+        if ins[0].mnemonic in OPENERS:
+            plausible += 1
+        if (ins[0].mnemonic == "push" and ins[0].op_str == "bp"
+                and len(ins) > 1 and ins[1].mnemonic == "mov"
+                and ins[1].op_str == "bp, sp"):
+            framed += 1
+    return framed, plausible
+
+
 def far_targets(img, load_seg):
     """Every far call and far jump with a literal, in-image destination."""
     calls = collections.Counter()
@@ -215,6 +252,9 @@ def main():
                     metavar="N",
                     help="show the first N Pascal strings in each segment -- "
                          "the fastest way to find out what each unit is")
+    ap.add_argument("--procs", metavar="FILE",
+                    help="write every procedure entry point, one image offset "
+                         "per line, for feeding to a disassembler")
     args = ap.parse_args()
 
     img, hdr = read_image(args.image)
@@ -270,7 +310,13 @@ def main():
         if err >= 0 and start <= err < start + size:
             rt = s
         rows.append({"segment": s, "start": start, "size": size,
-                     "calls": calls[s], "entries": len(entries[s])})
+                     "calls": calls[s], "entries": len(entries[s]),
+                     # Every offset far-called into a unit is the entry point
+                     # of one of its exported procedures. That is the Pascal
+                     # equivalent of what RecoverFunctions.java digs out of an
+                     # MZ image for C, and it costs nothing extra: the scan
+                     # already had to collect them to bound the segments.
+                     "procs": [start + e for e in sorted(entries[s])]})
         mark = ""
         if size > 0x10000:
             mark = "  <- over 64 KB: a boundary is hidden in here"
@@ -304,6 +350,30 @@ def main():
         mecc = sum(r["size"] for r in rows if r["segment"] != rt)
         print(f"              the other {len(rows) - 1} segments total "
               f"{mecc:,} bytes")
+
+    procs = sorted({p for r in rows for p in r.get("procs", [])})
+    if procs:
+        print(f"\nprocedures  : {len(procs)} entry points, from "
+              f"{procs[0]:#07x} to {procs[-1]:#07x}")
+        print("              every offset something far-calls is the start of "
+              "an exported\n              procedure -- this is the list to "
+              "hand a disassembler")
+        framed, ok = procedure_shape(img, procs)
+        # This is the whole analysis checking itself. If the segment list were
+        # wrong, these offsets would land in the middle of instructions and
+        # this figure would collapse -- so a high number here is evidence for
+        # everything above it, not just for the procedure list.
+        print(f"              {framed} of {len(procs)} open with "
+              f"`push bp / mov bp, sp` ({framed * 100 // len(procs)}%), "
+              f"{ok} are plausible")
+        if ok * 10 < len(procs) * 9:
+            print("              LOW -- under 90% plausible means the segment "
+                  "boundaries are suspect")
+
+    if args.procs:
+        Path(args.procs).write_text(
+            "".join(f"0x{p:05X}\n" for p in procs), encoding="ascii")
+        print(f"              wrote {args.procs}")
 
     if args.json:
         Path(args.json).write_text(json.dumps(
