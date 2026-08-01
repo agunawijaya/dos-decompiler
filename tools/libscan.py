@@ -25,9 +25,8 @@ Three things fall out of one scan:
 * **Where the runtime is.** Matched modules bound a region; everything outside
   it is the program. On the reference build that removes about a fifth of the
   work list before any analysis starts.
-* **The entry point.** Exactly one module in a C library declares a start
-  address in its MODEND record -- the startup module. Match it and the entry
-  point is a subtraction, not a guess.
+* **The entry point.** The startup module declares a start address in its
+  MODEND record. Match it and the entry point is a subtraction, not a guess.
 
 That last one is the reason this exists. `unpack.py` recovers a packed image
 but cannot recover its entry point, and a wrong entry point sends the
@@ -328,8 +327,9 @@ def _apply_fixups(mod, seg, base, body, is32):
 def _modend_start(body, is32):
     """Read the start address a startup module declares.
 
-    Exactly one module in a C runtime library carries this: the one the linker
-    takes the program's entry point from.
+    Only the startup module carries it -- the one the linker takes the
+    program's entry point from. It is not necessarily inside the library; see
+    the note on Microsoft C 1.04 at the top of this file.
     """
     p = 1
     ed = body[p]; p += 1
