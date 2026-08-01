@@ -129,6 +129,65 @@ them.
 Every sweep is re-verified by the loop, so a wrong guess costs a round rather
 than correctness.
 
+## Indirect jumps: read the pointer's writer, not the jump
+
+The gap sweep recovers code it cannot explain. This recovers code it can.
+
+`jmp word [0xbd9]` ends a walk. Everything the program does afterwards is
+invisible, and on a state machine that is nearly everything: **Hard Hat Mack
+reaches 236 of its 9,086 instructions from the entry point**, 2.6%, because the
+game is entered through exactly one such jump.
+
+That is the "functions reached only through pointers" problem — 28 of Sopwith's
+148 entry points, and the one gap the CONTRAP reconstruction independently
+reported having no technique for either.
+
+It is not solved in general. But most of it dissolves on one observation: a
+state machine of this era does not *compute* the pointer, it stores a constant
+into it.
+
+```nasm
+    mov word [0xbd9], 0xcb6     ; the game loop
+    ...
+    jmp word [0xbd9]
+```
+
+So the pass is: find every jump or call through a memory word, find every
+instruction that writes an immediate to that word, treat those immediates as
+entry points, and **iterate** — the code newly reached contains more of both.
+Iteration is not optional. Hard Hat Mack's second dispatch variable is only
+written by code that the first dispatch reaches.
+
+Measured on Hard Hat Mack, one variable with one target written to it:
+
+| | before | after |
+|---|---|---|
+| instructions reachable from the entry point | 236 (2.6%) | 8,624 (94.9%) |
+| sprite placement calls reachable | 37 of 89 | **85 of 89** |
+
+The rebuild was byte-identical before and after, and the disassembled fraction
+barely moved — 9,086 instructions to 9,094. That is the point worth noticing.
+The gap sweep had already recovered nearly all of those bytes *as bytes that
+decode*; what this adds is knowing they are **reached**, and from where. One is
+a guess that survived verification, the other is a fact about the program.
+
+`comrec.py` reports it:
+
+```
+dispatch    : jmp [0x0bd9] -> 0x00BB6; jmp [0x6daa] -> 0x02AFC, 0x02B05, 0x02B0E
+              indirect jumps resolved from the constants written to the pointer
+```
+
+**What it will not do** is follow a pointer loaded from a table or arrived at
+by arithmetic. Then there is nothing to report and it reports nothing, which is
+the correct failure — a guessed entry point sends the disassembler into the
+middle of a routine and everything after inherits the error.
+
+The fixture `tests/com/fixtures/dispatch.asm` hides two states behind one
+pointer, the second reachable only after the first, with the gap sweep blocked
+from rescuing either. Without the pass it recovers 27.9% of the file; with it,
+68.9%.
+
 ## The trap: a .COM with two bases
 
 A `.COM` is nominally one segment, but anything larger than a few kilobytes

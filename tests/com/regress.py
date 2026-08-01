@@ -82,6 +82,16 @@ EXPECTATIONS = {
          "out 0x20, al",                       # the end-of-interrupt
          "iret"],
     ),
+    # An indirect jump ends recursive descent. Both hidden states are reachable
+    # only through the pointer, and the second only after the first has been
+    # reached -- so finding `mov dl, 0x42` proves the detection iterated rather
+    # than taking one pass. The gap sweep is blocked from rescuing either.
+    "dispatch": (
+        40.0,
+        ["jmp [0x", "-> 0x",                   # reported, from comrec's output
+         "mov dl, 0x41",                       # inside the first state
+         "mov dl, 0x42"],                      # inside the second
+    ),
 }
 
 
