@@ -235,3 +235,104 @@ avoid.
 Both libraries came from the Internet Archive — 5.5 from Embarcadero's own
 Antique Software release, 5.0 from a floppy image set that `fatextract.py`
 opened directly. Point `--tpl` at as many as you can find.
+
+### Naming the calls, once you have the compiler
+
+Knowing the version buys something better than a label: **the compiler runs**,
+and a compiler you can run is an oracle. `TPC.EXE` under DOSBox-X compiles in a
+second or two, so the way to find out what `lcall 0x2DB8:0x017E` is, is to write
+Pascal that calls the routine you suspect and see where the compiler puts it.
+
+Write a probe that calls each candidate once, in a known order:
+
+```pascal
+program Off;
+uses Dos;
+begin
+  Assign(f,'X'); Reset(f,350); Close(f);
+  n := IOResult;    L := MemAvail;
+  n := DosVersion;  MsDos(r);
+  GetDate(a,b,c,d); GetTime(a,b,c,d);
+  FindFirst('X',63,sr); UnpackTime(L,dt); PackTime(dt,L); SetFTime(f,L);
+  Halt(1);
+end.
+```
+
+then read the `9A` far calls out of the compiled `.EXE` in address order and zip
+them against the source order. On The Oregon Trail this named `DosVersion`,
+`MsDos`, `GetDate`, `GetTime`, `GetCBreak` and `SetCBreak` outright: identical
+offsets in the probe and in the game.
+
+**And then it failed, usefully.** Every offset above `Dos+0x00F5` was wrong by
+exactly `0x34`:
+
+| | probe | game | difference |
+|---|---|---|---|
+| `FindFirst` | `0x014A` | `0x017E` | `0x34` |
+| `SetFTime` | `0x012B` | `0x015F` | `0x34` |
+| `UnpackTime` | `0x01C5` | `0x01F9` | `0x34` |
+| `PackTime` | `0x0209` | `0x023D` | `0x34` |
+
+A constant shift is a measurement. Smart-linking means the game contains fifty-two
+bytes of routine that the probe does not, somewhere between `SetCBreak` and
+`SetFTime`. Adding `GetVerify`/`SetVerify` to the probe moved things by `0x1D` —
+right mechanism, wrong routines. Adding `DiskFree`/`DiskSize` moved them by
+exactly `0x34`, and then **all fourteen offsets matched**.
+
+That is a prediction with a cheap test: if those two are linked, the program must
+call one of them. It does, once. A third probe calling only `DiskFree` put
+`DiskFree` at that offset, and the same run named `GetIntVec`, `SetIntVec` and
+`SwapVectors`, which had no argument shape to guess from at all.
+
+**The negative result is the part to carry forward.** A table of runtime-call
+offsets is *not* portable between two programs built by the same compiler. Only
+the prefix up to the first omitted routine is stable, so these are usable as
+anchors for TP 5.0 and nothing above them is:
+
+| | |
+|---|---|
+| `System+0x00D8` | `Halt` |
+| `System+0x0207` | `IOResult` |
+| `System+0x020E` | the automatic `{$I+}` I/O check after every I/O statement |
+| `Dos+0x0000` | `DosVersion` |
+| `Dos+0x0005` | `MsDos` |
+| `Dos+0x0071` | `GetDate` |
+| `Dos+0x00A7` | `GetTime` |
+| `Dos+0x00E3` | `GetCBreak` |
+| `Dos+0x00F5` | `SetCBreak` |
+
+Everything above must be re-derived per program. The good news is that
+re-deriving it is a two-minute compile, and the alignment either matches
+completely or tells you which routine you are missing.
+
+**What transfers beyond Pascal.** This is differential compilation, and it beats
+signature matching whenever the compiler is obtainable, because it replaces a
+judgement with an equality test. `libscan.py` matches against libraries someone
+shipped; this generates the reference on demand, for exactly the routines you
+care about, in exactly the configuration the program used.
+
+### One trap when you check the result by running it
+
+A Turbo Pascal program that says `uses Crt` cannot be observed with shell
+redirection. The `Crt` unit's initialiser replaces the device driver behind
+`Output` with one that writes straight into video memory — that is what makes it
+fast — so DOS never sees the text and there is nothing to redirect. `PROG > OUT`
+produces an empty file, every time, and it looks like the program printed
+nothing.
+
+Read the screen back instead. The text is still in video RAM after the program
+halts, so a second program run immediately afterwards can dump it:
+
+```pascal
+var scr : array[0..24, 0..79, 0..1] of Byte absolute $B800:0000;
+```
+
+Twenty lines, and it recovers the messages verbatim. This is the difference
+between "the program exited with code 1" and knowing which of five branches
+printed which words, and on The Oregon Trail it was what turned a licence check
+into a traced one.
+
+The complementary trick, when a program is silent and you only need to know
+*which* path it took: DOS `ERRORLEVEL`. A batch file with a descending ladder of
+`IF ERRORLEVEL n` reports the exact exit code, and Turbo Pascal's runtime errors
+come through as their own numbers — 2 is file-not-found, 203 is heap overflow.

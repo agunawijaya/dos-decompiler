@@ -56,6 +56,20 @@ not a nicety. Karateka keeps its artwork in ninety files beside the
 executable, and a game that cannot find its data does not fail loudly -- it
 prints a line and exits, which looks exactly like a harness bug.
 
+Compiled languages need more than a game written in assembly does, because
+their runtimes ask DOS questions a game never would. A Turbo Pascal program's
+`Dos` unit reaches for the directory search calls, the clock, the file
+timestamp and the drive-is-remote IOCTL before it draws anything, so those are
+answered too -- The Oregon Trail checks a licence file's age against the clock
+on its fourth statement.
+
+And it fills in the interrupt vector table, which matters more than it sounds.
+Trapping the `int` instruction only catches programs that use it; Turbo
+Pascal's `MsDos` and `Intr` read the vector out of the table and far-call it
+instead. Against a zeroed table that is a call to 0000:0000, and the program
+wanders off without ever raising an interrupt anyone could see. Every vector
+points at an `int n` / `iret` stub, so both routes arrive at the same place.
+
 Usage:
     python comrun.py GAME.COM --png screen.png
     python comrun.py GAME.EXE --files . --png screen.png
@@ -69,6 +83,7 @@ import argparse
 import json
 import struct
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 
 try:
@@ -90,6 +105,7 @@ BASE = SEG << 4
 VIDEO = 0xB800 << 4             # CGA framebuffer
 MEMSZ = 0x200000                # 2 MB flat, covers the program and the screen
 LOAD = 0x100                    # a .COM starts here, after its PSP
+STUBS = 0x0F000                 # interrupt stubs, just below the program
 
 # CGA mode 4 palette 1, high intensity -- the one nearly every game used.
 PALETTES = {
@@ -100,6 +116,16 @@ PALETTES = {
 
 ZF = 0x40                       # the zero flag, bit 6 of FLAGS
 CF = 0x01                       # the carry flag -- DOS's error flag
+
+# One fixed timestamp for every file, packed the way DOS packs them: the date
+# is (year-1980)<<9 | month<<5 | day and the time is hour<<11 | minute<<5 |
+# second/2. It must agree with what INT 21h AH=2Ah and AH=2Ch report, because
+# programs compare the two -- The Oregon Trail decides whether a network
+# licence is stale by subtracting a file's timestamp from the clock, and a
+# harness whose clock disagrees with its filesystem answers that question at
+# random.
+DOS_DATE = ((1990 - 1980) << 9) | (6 << 5) | 1          # 1 June 1990
+DOS_TIME = (10 << 11) | (30 << 5) | 0                   # 10:30:00
 
 
 def mz_header(data):
@@ -140,6 +166,7 @@ class Machine:
         self.file_reads = []        # what the program opened
         self.file_misses = []       # and what it looked for and did not find
         self.dta = BASE + 0x80
+        self.find_pending = []      # what FindNext still has to hand back
         self.output = []            # whatever the program printed
 
         self.uc = Uc(UC_ARCH_X86, UC_MODE_16)
@@ -157,6 +184,31 @@ class Machine:
         psp[2:4] = struct.pack("<H", 0x9FFF)   # top of a 640 KB machine
         psp[0x2C:0x2E] = struct.pack("<H", 0)  # no environment
         self.uc.mem_write(BASE, bytes(psp))
+
+        # An interrupt vector table that points somewhere.
+        #
+        # Trapping the `int` instruction is not enough, because not every
+        # program uses it. Turbo Pascal's `MsDos` and `Intr` read the vector
+        # out of the table and *far-call it*:
+        #
+        #     lds bx, [bx]        ; the handler, from 0000:0084 for INT 21h
+        #     push ds / push bx   ; and call it, with flags already pushed
+        #
+        # With a zeroed table that is a call to 0000:0000, and the program
+        # disappears into the interrupt vector table itself. The Oregon Trail
+        # does this on its fourth statement and the run ends in `int 20h`
+        # 1.17 million instructions later, looking for all the world like a
+        # program that decided not to start.
+        #
+        # So every vector gets a two-instruction stub -- `int n` then `iret` --
+        # in the paragraph below the program. Reached by `int`, the stub is
+        # never used; reached by a far call, it raises the interrupt the
+        # normal way and returns through the frame the caller pushed, which is
+        # already an iret frame because it pushed the flags first.
+        self.uc.mem_write(STUBS, b"".join(
+            bytes([0xCD, n, 0xCF, 0x90]) for n in range(256)))
+        self.uc.mem_write(0, b"".join(
+            struct.pack("<HH", n * 4, STUBS >> 4) for n in range(256)))
 
         self.mz = mz_header(image)
         if self.mz is None:
@@ -332,6 +384,36 @@ class Machine:
                 return f
         return None
 
+    def _find(self, pattern):
+        """The files a DOS `FindFirst` pattern matches, in directory order.
+
+        Only the leaf is used, for the same reason `_resolve` drops the path:
+        a program that searches `C:\\OT\\*.PCL` means the .PCL files in the
+        directory it was given.
+        """
+        if self.files is None:
+            return []
+        leaf = pattern.replace("/", "\\").split("\\")[-1].strip().upper()
+        return sorted(
+            (f for f in self.files.iterdir()
+             if f.is_file() and fnmatch(f.name.upper(), leaf or "*.*")),
+            key=lambda f: f.name.upper())
+
+    def _write_dta(self, uc, path):
+        """Fill the disk transfer area with one DOS directory entry.
+
+        21 reserved bytes, then attribute, time, date, size and an ASCIIZ name.
+        Turbo Pascal's `SearchRec` is laid over this same 43 bytes, which is why
+        its `Fill` field is exactly 21 long and its `Time` is a `LongInt`: the
+        time and date words are adjacent and it reads both at once.
+        """
+        entry = (b"\x00" * 21
+                 + bytes([0x20])                        # archive
+                 + struct.pack("<HH", DOS_TIME, DOS_DATE)
+                 + struct.pack("<I", path.stat().st_size)
+                 + path.name.upper().encode("ascii", "replace")[:12] + b"\x00")
+        uc.mem_write(self.dta, entry)
+
     def _dos(self, uc, ah):
         ax = uc.reg_read(UC_X86_REG_AX)
         ds = uc.reg_read(UC_X86_REG_DS)
@@ -379,9 +461,16 @@ class Machine:
             uc.reg_write(UC_X86_REG_AX, 0x1E03)     # 3.30, major in AL
             return
         if ah in (0x25, 0x35):              # set / get interrupt vector
+            # Against a real table, so SwapVectors round-trips: a program that
+            # saves the vectors, installs its own and puts them back gets its
+            # own values returned rather than zero.
+            n = (ax & 0xFF) * 4
             if ah == 0x35:
-                uc.reg_write(UC_X86_REG_BX, 0)
-                uc.reg_write(UC_X86_REG_ES, 0)
+                off, seg = struct.unpack("<HH", uc.mem_read(n, 4))
+                uc.reg_write(UC_X86_REG_BX, off)
+                uc.reg_write(UC_X86_REG_ES, seg)
+            else:
+                uc.mem_write(n, struct.pack("<HH", dx, ds))
             return
         if ah == 0x1A:                      # set disk transfer address
             self.dta = ((ds << 4) + dx)
@@ -433,6 +522,53 @@ class Machine:
             uc.mem_write((ds << 4) + dx, chunk)
             self._ok(uc, len(chunk))
             return
+        # The five below are what a Turbo Pascal program's `Dos` unit calls,
+        # and without them a Pascal program stops at its own first statement.
+        # The Oregon Trail opens PRODUCT.PF, stats it, reads its timestamp and
+        # asks whether the drive is a network drive -- all before it draws
+        # anything -- and answering none of them looks exactly like a crash.
+        if ah == 0x2C:                      # get time
+            uc.reg_write(UC_X86_REG_CX, (10 << 8) | 30)     # 10:30
+            uc.reg_write(UC_X86_REG_DX, 0)                  # 00.00 seconds
+            return
+        if ah == 0x44:                      # IOCTL
+            al = ax & 0xFF
+            if al == 0x09:                  # is this drive remote?
+                # Say local. A network drive is the unusual answer, and it is
+                # the one that turns licence checks on: The Oregon Trail asks
+                # exactly this and only enforces its lab licence if the bit is
+                # set. Anything that wants to test the other branch should say
+                # so deliberately rather than inherit it from a default.
+                uc.reg_write(UC_X86_REG_DX, 0x0800)
+                self._ok(uc)
+                return
+            self._ok(uc)
+            return
+        if ah in (0x4E, 0x4F):              # find first / find next
+            if ah == 0x4E:
+                self.find_pending = self._find(self._str_at(uc, ds, dx))
+            entry = self.find_pending.pop(0) if self.find_pending else None
+            if entry is None:
+                self._fail(uc, 18)          # no more files
+                return
+            self._write_dta(uc, entry)
+            self._ok(uc)
+            return
+        if ah == 0x57:                      # get / set a file's timestamp
+            al = ax & 0xFF
+            if al == 0x00:
+                uc.reg_write(UC_X86_REG_CX, DOS_TIME)
+                uc.reg_write(UC_X86_REG_DX, DOS_DATE)
+            # AL=1 sets it; nothing here writes to disk, so accept and forget.
+            self._ok(uc)
+            return
+        if ah == 0x36:                      # free space on a drive
+            uc.reg_write(UC_X86_REG_AX, 4)          # sectors per cluster
+            uc.reg_write(UC_X86_REG_BX, 0x2000)     # free clusters
+            uc.reg_write(UC_X86_REG_CX, 512)        # bytes per sector
+            uc.reg_write(UC_X86_REG_DX, 0x4000)     # clusters on the drive
+            return
+
         if ah == 0x42:                      # seek
             bx = uc.reg_read(UC_X86_REG_BX)
             f = self.open_files.get(bx)
@@ -681,6 +817,22 @@ def main():
     if args.keys:
         print(f"  keyboard: {m.keys_read} reads, {len(m.keys)} of "
               f"{len(keys)} keys unused")
+
+    # These three were collected and then thrown away, which was the wrong
+    # trade: when a program stops early it usually says why, and what it went
+    # looking for is the other half of the answer. A run that ends at int 20h
+    # with a file miss in the list has already diagnosed itself.
+    if m.file_reads:
+        print("  files opened: " + ", ".join(dict.fromkeys(m.file_reads)))
+    if m.file_misses:
+        print("  files NOT found: " + ", ".join(dict.fromkeys(m.file_misses))
+              + ("" if m.files else "   (no --files given)"))
+    if m.output:
+        text = "".join(m.output).replace("\r\n", "\n").strip()
+        if text:
+            print("  the program printed:")
+            for line in text.split("\n"):
+                print(f"      {line}")
 
     if args.call:
         if args.ax:
