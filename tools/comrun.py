@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-comrun.py -- Run a .COM under emulation and capture what it draws.
+comrun.py -- Run a DOS program under emulation and capture what it draws.
 
 Why this exists
 ---------------
@@ -43,8 +43,22 @@ after which the program is told the keyboard is empty again. Each entry is
 either a character (`1`) or a full `AX` as scancode:ASCII (`0x4800` for the up
 arrow, which has no character at all).
 
+What it loads
+-------------
+`.COM` and MZ. An MZ needs a loader rather than a memcpy -- the header says
+where the image ends, every relocation entry names a segment word that has the
+load segment added to it, and CS:IP and SS:SP come from the header. Skipping
+any of that gives a program that starts and then behaves inexplicably.
+
+It also answers enough of DOS to reach a first screen: the version, memory
+allocation, and file open/read/seek/close against `--files`. That last one is
+not a nicety. Karateka keeps its artwork in ninety files beside the
+executable, and a game that cannot find its data does not fail loudly -- it
+prints a line and exits, which looks exactly like a harness bug.
+
 Usage:
     python comrun.py GAME.COM --png screen.png
+    python comrun.py GAME.EXE --files . --png screen.png
     python comrun.py GAME.COM --keys 1 --stop-at 0x3B1 --png frame.png
     python comrun.py GAME.COM --call 0x14D8 --png level1.png
     python comrun.py GAME.COM --call 0x14D8 --watch 0x217,0x268,0x2b1 \\
@@ -85,10 +99,25 @@ PALETTES = {
 
 
 ZF = 0x40                       # the zero flag, bit 6 of FLAGS
+CF = 0x01                       # the carry flag -- DOS's error flag
+
+
+def mz_header(data):
+    """The fields a loader needs, or None if this is not an MZ."""
+    if len(data) < 0x20 or data[:2] not in (b"MZ", b"ZM"):
+        return None
+    last, pages, nreloc, hdr_paras = struct.unpack_from("<HHHH", data, 2)
+    ss, sp, _, ip, cs, reloc = struct.unpack_from("<HHHHHH", data, 14)
+    hdr = hdr_paras * 16
+    end = (pages - 1) * 512 + (last or 512)
+    if not (0 < hdr <= len(data)):
+        return None
+    return {"hdr": hdr, "end": min(end, len(data)), "nreloc": nreloc,
+            "reloc": reloc, "cs": cs, "ip": ip, "ss": ss, "sp": sp}
 
 
 class Machine:
-    def __init__(self, image, trace=False, keys=()):
+    def __init__(self, image, trace=False, keys=(), files=None):
         self.image = image
         self.trace = trace
         self.keys = list(keys)  # AX values INT 16h will hand out, in order
@@ -104,28 +133,109 @@ class Machine:
         self.steps = 0
         self.stopped = None
         self.pending_key = None     # what port 0x60 should hand over next
+        self.files = Path(files) if files else None
+        self.open_files = {}        # handle -> [bytes, position, name]
+        self.next_handle = 5        # 0-4 are the standard ones
+        self.next_para = 0x4000     # where INT 21h AH=48 hands out memory
+        self.file_reads = []        # what the program opened
+        self.file_misses = []       # and what it looked for and did not find
+        self.dta = BASE + 0x80
+        self.output = []            # whatever the program printed
 
         self.uc = Uc(UC_ARCH_X86, UC_MODE_16)
         self.uc.mem_map(0, MEMSZ, UC_PROT_ALL)
-        self.uc.mem_write(BASE + LOAD, bytes(image))
+        # A plausible PSP. Mostly zero is right -- no command tail, no
+        # arguments -- but two words are not optional.
+        #
+        # PSP+2 is the segment one past the memory DOS gave the program,
+        # and a zero there means it was given none. Karateka reads it,
+        # prints "Insufficient memory" and exits twenty-three instructions
+        # in. That is not a crash and does not look like a bug in the
+        # harness; it looks like a game that refuses to run.
+        psp = bytearray(0x100)
+        psp[0:2] = b"\xCD\x20"          # int 20h, the ancient exit path
+        psp[2:4] = struct.pack("<H", 0x9FFF)   # top of a 640 KB machine
+        psp[0x2C:0x2E] = struct.pack("<H", 0)  # no environment
+        self.uc.mem_write(BASE, bytes(psp))
 
-        # A plausible PSP. Programs read the command tail and the exit address
-        # from it, and a zero page reads as "no arguments", which is right.
-        self.uc.mem_write(BASE, b"\xCD\x20" + b"\x00" * 0xFE)
-
-        for r in (UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS):
-            self.uc.reg_write(r, SEG)
-        self.uc.reg_write(UC_X86_REG_SP, 0xFFFE)
+        self.mz = mz_header(image)
+        if self.mz is None:
+            # A .COM: the whole file is the image and it runs from 0x100, with
+            # every segment register pointing at the PSP.
+            self.uc.mem_write(BASE + LOAD, bytes(image))
+            for r in (UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES,
+                      UC_X86_REG_SS):
+                self.uc.reg_write(r, SEG)
+            self.uc.reg_write(UC_X86_REG_SP, 0xFFFE)
+        else:
+            self._load_mz(image, self.mz)
 
         self.uc.hook_add(UC_HOOK_INTR, self._on_int)
         self.uc.hook_add(UC_HOOK_INSN, self._on_in, None, 1, 0, UC_X86_INS_IN)
         self.uc.hook_add(UC_HOOK_INSN, self._on_out, None, 1, 0, UC_X86_INS_OUT)
         self.uc.hook_add(UC_HOOK_CODE, self._on_code)
 
+    def _load_mz(self, image, h):
+        """Load an MZ the way DOS does, relocations and all.
+
+        A `.COM` needs no loader: the file is the image, it goes at 0x100, and
+        every segment register points at the PSP. An MZ needs four things done
+        to it, and skipping any of them gives a program that starts and then
+        behaves inexplicably rather than one that fails:
+
+          * the load image is the file minus its header, and no more -- the
+            page count and last-page size say where it ends, and anything after
+            is the linker's or the packer's, not the program's;
+          * every entry in the relocation table names a word holding a segment
+            that was written as if the program loaded at zero. Each one has the
+            real load segment added to it. Miss this and far calls go to
+            wherever the program would have been on a machine that does not
+            exist;
+          * CS:IP and SS:SP come from the header, not from convention;
+          * DS and ES point at the PSP, which is one paragraph *before* the
+            image. Programs read the command tail through them and set DS
+            themselves when they are ready.
+        """
+        hdr, end, nreloc, reloc_off = h["hdr"], h["end"], h["nreloc"], h["reloc"]
+        load = SEG + (LOAD >> 4)          # the image sits after the PSP
+        body = image[hdr:end]
+        self.uc.mem_write(BASE + LOAD, bytes(body))
+
+        for k in range(nreloc):
+            off, seg = struct.unpack_from("<HH", image, reloc_off + k * 4)
+            at = ((load + seg) << 4) + off
+            cur = struct.unpack_from("<H", bytes(self.uc.mem_read(at, 2)), 0)[0]
+            self.uc.mem_write(at, struct.pack("<H", (cur + load) & 0xFFFF))
+
+        self.uc.reg_write(UC_X86_REG_CS, (load + h["cs"]) & 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_IP, h["ip"])
+        self.uc.reg_write(UC_X86_REG_SS, (load + h["ss"]) & 0xFFFF)
+        self.uc.reg_write(UC_X86_REG_SP, h["sp"])
+        self.uc.reg_write(UC_X86_REG_DS, SEG)
+        self.uc.reg_write(UC_X86_REG_ES, SEG)
+        self.mz_entry = (h["cs"] << 4) + h["ip"]
+
     # -- hooks ---------------------------------------------------------------
+
+    # The BIOS keeps its 18.2 Hz tick count at 0040:006C, and a game that wants
+    # to wait reads it there rather than asking through INT 1Ah -- reading two
+    # words is cheaper than an interrupt. Karateka spins on it in its start-up:
+    #
+    #     xor ax, ax / mov ds, ax / mov bx, 0x46c
+    #     mov si, [bx] / inc si
+    #     .wait: cmp si, [bx] / jne .wait
+    #
+    # Answering INT 1Ah is not enough, because nothing here asks. Leave the
+    # counter at zero and the program waits for a tick that never comes: no
+    # crash, no message, a black screen and the whole instruction budget spent
+    # on two instructions.
+    TICK_EVERY = 20_000
 
     def _on_code(self, uc, addr, size, _):
         self.steps += 1
+        if self.steps % self.TICK_EVERY == 0:
+            self.ticks += 1
+            uc.mem_write(0x46C, struct.pack("<I", self.ticks))
         off = addr - BASE - LOAD
         if off in self.watch:
             self.watch[off](off)
@@ -146,6 +256,8 @@ class Machine:
         elif num == 0x21 and ah in (0x4C, 0x00):
             self.stopped = "int 0x21 exit"
             uc.emu_stop()
+        elif num == 0x21:
+            self._dos(uc, ah)
         elif num == 0x1A and ah == 0x00:
             # The BIOS tick count. Answering with a constant is not "no
             # effect": `int 0x1a / cmp dl, [last] / je` is how a game waits for
@@ -176,6 +288,145 @@ class Machine:
         # Everything else is acknowledged by doing nothing. Setting a video
         # mode, printing a string and reading the clock all have the same
         # effect on what we are measuring: none.
+
+    # ---------------------------------------------------------------- DOS
+    #
+    # Enough of INT 21h to get a game with external data files to its first
+    # screen. Karateka needs it: ninety data files beside the executable, and
+    # without file I/O the program reaches its first `open` and stops being a
+    # game. Answering "no such file" is not neutral either -- a game that
+    # cannot find its artwork usually prints a message and exits, which looks
+    # exactly like a program that crashed.
+    #
+    # Carry is the error flag throughout: clear for success, set for failure
+    # with the code in AX. Unicorn's interrupt hook does not push or pop FLAGS,
+    # so whatever is written here is what the program reads.
+
+    def _fail(self, uc, code):
+        uc.reg_write(UC_X86_REG_AX, code)
+        uc.reg_write(UC_X86_REG_EFLAGS,
+                     uc.reg_read(UC_X86_REG_EFLAGS) | CF)
+
+    def _ok(self, uc, ax=0):
+        uc.reg_write(UC_X86_REG_AX, ax)
+        uc.reg_write(UC_X86_REG_EFLAGS,
+                     uc.reg_read(UC_X86_REG_EFLAGS) & ~CF)
+
+    def _str_at(self, uc, seg, off, limit=128):
+        addr = (seg << 4) + off
+        raw = bytes(uc.mem_read(addr, limit))
+        return raw.split(b"\x00")[0].decode("latin-1")
+
+    def _resolve(self, name):
+        r"""A DOS path, against the directory the game's files are in.
+
+        Case matters here and does not on DOS, so the match is case-insensitive
+        and the drive and directory parts are dropped: a game that opens
+        `C:\KARATEKA\KM0.DAT` means the file called KM0.DAT.
+        """
+        if self.files is None:
+            return None
+        leaf = name.replace("/", "\\").split("\\")[-1].strip().upper()
+        for f in self.files.iterdir():
+            if f.is_file() and f.name.upper() == leaf:
+                return f
+        return None
+
+    def _dos(self, uc, ah):
+        ax = uc.reg_read(UC_X86_REG_AX)
+        ds = uc.reg_read(UC_X86_REG_DS)
+        dx = uc.reg_read(UC_X86_REG_DX)
+
+        if ah == 0x09:                      # print a $-terminated string
+            # Worth capturing rather than ignoring: when a game refuses to run,
+            # this is where it says why, and the message is usually the fastest
+            # route to the reason.
+            raw = bytes(uc.mem_read((ds << 4) + dx, 512))
+            self.output.append(raw.split(b"$")[0].decode("latin-1"))
+            return
+        if ah == 0x02:                      # print one character
+            self.output.append(chr(uc.reg_read(UC_X86_REG_DX) & 0xFF))
+            return
+        if ah == 0x30:                      # get DOS version
+            # A program that asks and is told 0 concludes it is on DOS 1 and
+            # refuses to run. Karateka does exactly that, in its first twenty
+            # instructions.
+            uc.reg_write(UC_X86_REG_AX, 0x1E03)     # 3.30, major in AL
+            return
+        if ah in (0x25, 0x35):              # set / get interrupt vector
+            if ah == 0x35:
+                uc.reg_write(UC_X86_REG_BX, 0)
+                uc.reg_write(UC_X86_REG_ES, 0)
+            return
+        if ah == 0x1A:                      # set disk transfer address
+            self.dta = ((ds << 4) + dx)
+            return
+        if ah == 0x2A:                      # get date
+            uc.reg_write(UC_X86_REG_CX, 1990)
+            uc.reg_write(UC_X86_REG_DX, 0x0601)     # 1 June
+            uc.reg_write(UC_X86_REG_AX, 5)          # a Friday
+            return
+        if ah in (0x48,):                   # allocate memory
+            # Hand out a block above everything, and never reuse it. Nothing
+            # here frees anything, and a game that allocates once at start-up
+            # -- which is nearly all of them -- never notices.
+            uc.reg_write(UC_X86_REG_AX, self.next_para)
+            self.next_para += uc.reg_read(UC_X86_REG_BX)
+            self._ok(uc, self.next_para)
+            return
+        if ah in (0x49, 0x4A):              # free / resize
+            self._ok(uc)
+            return
+
+        if ah in (0x3D, 0x3C, 0x6C):        # open / create
+            name = self._str_at(uc, ds, dx)
+            path = self._resolve(name)
+            if path is None:
+                self.file_misses.append(name)
+                self._fail(uc, 2)           # file not found
+                return
+            h = self.next_handle
+            self.next_handle += 1
+            self.open_files[h] = [path.read_bytes(), 0, path.name]
+            self.file_reads.append(path.name)
+            self._ok(uc, h)
+            return
+        if ah == 0x3E:                      # close
+            self.open_files.pop(uc.reg_read(UC_X86_REG_BX), None)
+            self._ok(uc)
+            return
+        if ah == 0x3F:                      # read
+            bx = uc.reg_read(UC_X86_REG_BX)
+            n = uc.reg_read(UC_X86_REG_CX)
+            f = self.open_files.get(bx)
+            if f is None:
+                self._fail(uc, 6)           # invalid handle
+                return
+            data, pos, _ = f
+            chunk = data[pos:pos + n]
+            f[1] = pos + len(chunk)
+            uc.mem_write((ds << 4) + dx, chunk)
+            self._ok(uc, len(chunk))
+            return
+        if ah == 0x42:                      # seek
+            bx = uc.reg_read(UC_X86_REG_BX)
+            f = self.open_files.get(bx)
+            if f is None:
+                self._fail(uc, 6)
+                return
+            cx = uc.reg_read(UC_X86_REG_CX)
+            off = ((cx << 16) | dx) & 0xFFFFFFFF
+            whence = ax & 0xFF
+            base = {0: 0, 1: f[1], 2: len(f[0])}.get(whence, 0)
+            f[1] = max(0, min(len(f[0]), base + off))
+            uc.reg_write(UC_X86_REG_DX, (f[1] >> 16) & 0xFFFF)
+            self._ok(uc, f[1] & 0xFFFF)
+            return
+
+        # Anything else is acknowledged as success. Saying "unsupported" would
+        # be more honest and less useful: most of what is left is console
+        # output, and a game that cannot print does not stop being a game.
+        self._ok(uc)
 
     # A warning about the port reads below, paid for on Zaxxon. Alternating
     # values keep timing loops moving, which is what they are for -- but a
@@ -213,8 +464,15 @@ class Machine:
 
     # -- running -------------------------------------------------------------
 
-    def run(self, start, stop=None, budget=20_000_000):
-        """Execute from a file offset until it returns, exits or runs out."""
+    def run(self, start=None, stop=None, budget=20_000_000):
+        """Execute from an image offset until it returns, exits or runs out.
+
+        `start=None` means the program's own entry point: 0 for a `.COM`, and
+        for an MZ whatever `CS:IP` in the header says, which is frequently not
+        the beginning of the image.
+        """
+        if start is None:
+            start = getattr(self, "mz_entry", 0)
         try:
             self.uc.emu_start(BASE + LOAD + start,
                               BASE + LOAD + stop if stop is not None
@@ -347,6 +605,11 @@ def main():
                          "INT 9 handler after --call, comma separated hex. "
                          "Use this for a game that reads the keyboard port "
                          "itself; --keys is for one that asks DOS or the BIOS")
+    ap.add_argument("--files", metavar="DIR",
+                    help="directory the program's data files are in; "
+                         "without it every open fails, and a game that "
+                         "cannot find its artwork usually prints a "
+                         "message and exits")
     ap.add_argument("--budget", type=int, default=20_000_000)
     ap.add_argument("--png")
     ap.add_argument("--palette", default="1", choices=sorted(PALETTES))
@@ -359,7 +622,8 @@ def main():
         keys.append(int(k, 0) if k.lower().startswith("0x") else ord(k[0]))
 
     image = Path(args.binary).read_bytes()
-    m = Machine(image, keys=keys)
+    m = Machine(image, keys=keys,
+                files=args.files or Path(args.binary).parent)
 
     watch = [int(x, 16) for x in args.watch.split(",")] if args.watch else []
     varlist = [int(x, 16) for x in args.vars.split(",")] if args.vars else []
@@ -377,7 +641,12 @@ def main():
     stop = int(args.stop_at, 16) if args.stop_at else None
     if stop is not None:
         m.stop_off, m.stop_after = stop, args.stop_after
-    why = m.run(0, stop=None, budget=args.budget)
+    if m.mz is not None:
+        print(f"format    : MZ, {m.mz['hdr']}-byte header, "
+              f"{m.mz['nreloc']} relocations applied; "
+              f"entry CS:IP {m.mz['cs']:04X}:{m.mz['ip']:04X} "
+              f"-> image offset 0x{m.mz_entry:X}")
+    why = m.run(None, stop=None, budget=args.budget)
     print(f"start-up: {m.steps:,} instructions, stopped: {why}")
     print(f"  interrupts requested: "
           + ", ".join(sorted({f"{n:02X}h" for n, _ in m.ints})) or "  none")
