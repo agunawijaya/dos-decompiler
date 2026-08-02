@@ -296,3 +296,66 @@ Two rules, and the second is the one that keeps catching me:
 - **When a metric reaches 100%, that is the moment to ask what it is measuring**
   — not the moment to stop. Every completion claim in this repository that had
   to be withdrawn was a real number with an unstated denominator.
+
+## Hook the difference, not the total
+
+The referee that compares a static reading against the running program had been
+saying this for three sessions:
+
+```
+overall: 172 of 193 placements reproduced -- recall 89%, precision 93%
+missed (13):
+   x1  ('place', 28, 191, 0)
+   x1  ('place', 20, 191, 0)
+   ...
+```
+
+Twenty-one wrong placements, listed by value. Correct, checkable, and nothing
+was done about it for three sessions, because a list of coordinates is not a
+list of anything you can go and read. It was written up as "three groups: four
+rivets along a bottom row, a vertical run of five, and a column of three" —
+which is a description of the *picture*, and the picture is not where the bug
+is.
+
+The hook already stopped at the drawing routine's first instruction. At that
+point the return address is one word down `SS:SP`, before anything has been
+pushed, and the routine that owns it is a lookup in the symbol file. Six extra
+lines:
+
+```
+missed (13), by the routine that made them:
+   x4  draw_beams
+   x4  draw_rivets
+   x3  draw_toolboxes
+   x1  spawn_lunchbox
+   x1  draw_hoist_car
+```
+
+Five names. Three sessions of "twenty-one placements" became an afternoon, and
+three bugs in the static extractor came out of it:
+
+- **A counted loop that runs up.** `mov bl, 1` / `mov byte [V], bl` … `inc byte
+  [V]` / `cmp bl, 5` was read as the count-down shape every other loop in the
+  program uses. Indices 1 and 0 instead of 1, 2, 3, 4. Every iteration still
+  produced *a* placement, so no error was raised and the coverage metric did
+  not move.
+- **A zero immediate written in decimal.** NASM prints `mov word [sel], 0`, not
+  `mov word [sel], 0x0000`, and the store pattern required the `0x` form. One
+  routine sets its shape that way and nothing else, so four beams took whatever
+  shape the previous routine had left behind.
+- **A global that outlives the routine that set it.** Callee state was
+  deliberately isolated from the caller — with good reason, an earlier bug had
+  two calls to the same routine reading each other's leftovers — so a routine
+  that writes no shape selector had none at all. It is now carried in walk
+  order, separately from the isolated state, because walk order is the order
+  the program writes it in.
+
+None of the three would have been found from the coordinates. All three are
+obvious in the twenty instructions of the routine that the caller attribution
+names.
+
+**The rule.** When a comparison produces a difference, spend the next hook on
+attributing the difference rather than on measuring the total more precisely.
+A total tells you how far you have to go. An attribution tells you where to
+stand. And the cost is usually a stack read: the caller is already on the
+stack at the moment you are already stopped.

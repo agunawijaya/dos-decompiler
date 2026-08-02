@@ -256,6 +256,7 @@ class Extractor:
         self.base = load_base
         self.image = rec.image
         self.unparsed = []
+        self.last_sel = None    # the selector a routine that writes none inherits
         self.out_guard = []
         self.sites = 0          # placement calls reached
         self.explained = 0      # ...of which produced at least one placement
@@ -274,6 +275,49 @@ class Extractor:
 
     def routine(self, start, limit=300):
         return routine(self.r, start, limit)
+
+    @staticmethod
+    def up_loop(body):
+        """A counted loop that runs *up* to a `cmp`, rather than down to zero.
+
+        `mov bl, N` with the counter stored to a variable was read as N, N-1,
+        ... 0, because that is the shape of the girder loops. Four of Hard Hat
+        Mack's routines count the other way:
+
+            mov bl, 1
+            mov byte [loop_index], bl
+          again:
+            ... place a sprite indexed by BL ...
+            inc byte [loop_index]
+            mov bl, byte [loop_index]
+            cmp bl, 5
+            je  out
+            jmp again
+
+        Read as a down-loop that is indices 1 and 0; the program means 1, 2, 3
+        and 4. Every one of the four still produced *a* placement, so nothing
+        failed -- draw_rivets drew two rivets at the wrong rows instead of
+        four at the right ones, and the coverage number stayed where it was.
+
+        Returns (first, limit) so the caller can walk `range(first, limit)`.
+        """
+        text = [t for _, t, _ in body]
+        for n, t in enumerate(text[:-1]):
+            m = re.match(r"^mov bl, (0x[0-9a-f]+|\d+)$", t)
+            if not m:
+                continue
+            v = re.match(r"^mov byte \[(0x[0-9a-f]+)\], bl$", text[n + 1])
+            if not v:
+                continue
+            first, var = int(m.group(1), 0), v.group(1)
+            if f"inc byte [{var}]" not in text[n:]:
+                continue
+            j = text.index(f"inc byte [{var}]", n)
+            for t2 in text[j:j + 4]:
+                c = re.match(r"^cmp bl, (0x[0-9a-f]+|\d+)$", t2)
+                if c and int(c.group(1), 0) > first:
+                    return first, int(c.group(1), 0)
+        return None
 
     def walk(self, start, depth=0, seen=None, inherited=None):
         """Collect placements from a routine and everything it calls.
@@ -316,9 +360,22 @@ class Extractor:
         # the call looked like a placement with no column.
 
         body = self.routine(start)
+        up = self.up_loop(body)
+        if up:
+            state["up"] = up
+        sel_addrs = {tr.sel for v in self.drawers.values()
+                     for tr in (v if isinstance(v, list) else [v])}
         for n, (o, t, g) in enumerate(body):
             nxt = body[n + 1][1] if n + 1 < len(body) else ""
             if self.step(state, t, nxt):
+                # The selector is a real global and it outlives the routine
+                # that set it. Callee state is deliberately not merged back --
+                # that once let two calls to draw_crate read each other's
+                # columns -- so remember the last value written to it here,
+                # in walk order, which is the order the program writes it in.
+                for a in sel_addrs:
+                    if a in state["words"]:
+                        self.last_sel = state["words"][a]
                 continue
             if t.startswith("call") and g is not None:
                 if g in self.fillers:
@@ -516,9 +573,13 @@ class Extractor:
             # rather than leaving a stale earlier value in place.
             state["bytes"][int(m.group(1), 16)] = None
             return True
-        m = re.match(r"^mov word \[(0x[0-9a-f]+)\], (0x[0-9a-f]+)$", t)
+        # `0` and not `0x0000`: NASM prints a zero immediate in decimal, and
+        # requiring the 0x form silently dropped every write of it.
+        # draw_beams sets `mov word [shape_select], 0` and nothing else, so its
+        # four beams came out with whatever shape the previous routine left.
+        m = re.match(r"^mov word \[(0x[0-9a-f]+)\], (0x[0-9a-f]+|\d+)$", t)
         if m:
-            a, v = int(m.group(1), 16), int(m.group(2), 16)
+            a, v = int(m.group(1), 16), int(m.group(2), 0)
             state["words"][a] = v
             # A word write sets both bytes, and code reads them back:
             # `mov word [SEL], 0x1B00` then `mov al, byte [SEL]` is how a
@@ -626,6 +687,9 @@ class Extractor:
             top = s.get(reg)
             if reg not in uses or top is None:
                 return [top]
+            up = s.get("up") if reg == "bx" else None
+            if up and up[0] == top:
+                return range(up[0], up[1])
             if s.get(count):
                 return range(top, -1, -1)      # counted loop, walked down
             # No immediate count. If every table this placement indexes ends in
@@ -707,7 +771,18 @@ class Extractor:
             hi = s["words"][tr.sel] >> 8
         elif tr.sel + 1 in s["bytes"]:
             hi = s["bytes"][tr.sel + 1]
-        if hi is None or tr.masks_low:
+        if hi is None:
+            # The selector is a real global and it persists. Two of Hard Hat
+            # Mack's routines never write it -- draw_rivets and draw_beams set
+            # the blit mode and nothing else, and draw whatever shape the last
+            # routine left behind. Callee state is deliberately not merged back
+            # into the caller, because that once let two calls to draw_crate
+            # read each other's columns, so the value cannot reach here that
+            # way. Carrying the last selector *emitted* does reach it, and
+            # emission order is execution order: the walk is depth-first and
+            # in order, which is how the program runs.
+            return self.last_sel
+        if tr.masks_low:
             return hi
         lo = s["bytes"].get(tr.sel)
         if lo is None:
