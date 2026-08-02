@@ -655,9 +655,11 @@ from a real game, because games from the period are still under copyright.
 
 `comrec` finishing is the end of one job and the start of another. Karateka's
 listing is byte-identical and 99.1% of its code region carries an instruction,
-and it is still ten thousand lines of `L_02605` and `word [0x116]`. **38 of its
-120 routines are named — 32%.** Quote both numbers or the first will be read as
-the second.
+and it is still ten thousand lines of `L_02605` and `word [0x116]`. Naming all
+120 of its routines took three further sittings. Quote both numbers or the
+first will be read as the second — and quote the third too, because the code
+references 312 data-segment addresses and 127 are named -- 41% of
+them, but 77% of the references.
 
 `annotate.py` closes the gap without weakening the claim. It takes a symbol
 file — `{address: [name, why]}` — and applies it as `%define`s and label

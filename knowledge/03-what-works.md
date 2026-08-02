@@ -45,13 +45,20 @@ strings, none of it lost.
 ### Reconstruction is not reading
 
 Karateka's reconstruction is finished in every sense the tools can measure, and
-finishing the *reading* was a separate job that took its own sitting: **80 of
-its 120 routines are named**, and the split is the interesting part. Every
-routine that touches a game global is named. The remaining 40 are the C
-library, separated mechanically — no game global, and DOS reached only through
-twelve identified primitives — and left unnamed because their shapes do not
-discriminate. `libscan.py` would name them given the library; guessing would
-only produce names the next reader believes.
+finishing the *reading* was a separate job, and it took three sittings and two
+retractions to get to **120 of 120 routines named**. The game side was read.
+The library side was settled without a copy of the library: *probed* against
+specifications, *watched* during a real run to see what the program actually
+passes, and *read* where the body says it outright.
+
+What is **not** finished is the data. The code references 312 distinct
+data-segment addresses and 127 have names — 41% of the addresses, but **77% of
+the references**, because what is left is mostly touched once or twice.
+
+Routines are the easy half: an entry point, callers, and behaviour you can
+probe. A global has only its uses, and one used twice leaves almost nothing to
+reason from. Quote the reference-weighted figure as well as the count — they
+say different things, and the gap between 41% and 77% *is* the finding.
 
 That gap is worth stating plainly whenever a percentage is quoted, because
 "91.9% recovered" and "we understand this program" are different claims and the
