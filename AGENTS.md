@@ -1,6 +1,6 @@
 # Working on a DOS binary with this toolkit
 
-Instructions for any coding agent — or any person — driving `dos-decompiler`.
+Instructions for any coding agent — or any person — driving `DOS-Decompiler`.
 This is the canonical method; `SKILL.md` is a thin wrapper for Claude Code that
 points here.
 

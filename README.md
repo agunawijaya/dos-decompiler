@@ -1,4 +1,4 @@
-# dos-decompiler
+# DOS-Decompiler
 
 Tooling for reverse-engineering 1980s DOS programs — 16-bit real-mode MZ
 executables for the 8086/8088 — with every accuracy claim measured against a
@@ -349,7 +349,7 @@ copies, and source it.
 
 ```powershell
 git clone <this repo>
-cd dos-decompiler
+cd DOS-Decompiler
 Copy-Item env.example.ps1 env.ps1     # then edit the paths
 . .\env.ps1
 ```
@@ -592,7 +592,7 @@ cloned once and never edited.
 ```
 C:\Projects\
 │
-├─ dos-decompiler\              <- the toolkit. Clone once. Don't edit.
+├─ DOS-Decompiler\              <- the toolkit. Clone once. Don't edit.
 │    tools\
 │    knowledge\
 │    AGENTS.md
@@ -617,8 +617,8 @@ attempts belong with the game, not mixed into the toolkit's git history.
 
 ```powershell
 cd C:\Projects
-git clone <this repo> dos-decompiler
-cd dos-decompiler
+git clone <this repo> DOS-Decompiler
+cd DOS-Decompiler
 Copy-Item env.example.ps1 env.ps1     # edit it to point at Ghidra, JDK, etc.
 pip install capstone unicorn
 ```
@@ -635,8 +635,8 @@ Then create `C:\Projects\mygame\AGENTS.md` containing exactly this:
 ```markdown
 # Decompiling MYGAME
 
-The DOS decompilation toolkit is at `C:\Projects\dos-decompiler`.
-Read `C:\Projects\dos-decompiler\AGENTS.md` and follow it.
+The DOS decompilation toolkit is at `C:\Projects\DOS-Decompiler`.
+Read `C:\Projects\DOS-Decompiler\AGENTS.md` and follow it.
 
 The game's original files are in `game/`. Write all output to `out/`.
 Never modify anything in `game/`.
@@ -651,7 +651,7 @@ also a good place to record what you already know about the game.
 available in every project:
 
 ```powershell
-Copy-Item -Recurse C:\Projects\dos-decompiler `
+Copy-Item -Recurse C:\Projects\DOS-Decompiler `
                    $HOME\.claude\skills\dos-decompile
 
 cd C:\Projects\mygame
@@ -674,9 +674,9 @@ own `AGENTS.md`.
 
 **Anything else** — start it in `C:\Projects\mygame` and paste:
 
-> Read `C:\Projects\dos-decompiler\AGENTS.md` and follow it. The game is in
+> Read `C:\Projects\DOS-Decompiler\AGENTS.md` and follow it. The game is in
 > `game/`; write output to `out/` and never modify `game/`. Start with
-> `python C:\Projects\dos-decompiler\tools\survey.py game`.
+> `python C:\Projects\DOS-Decompiler\tools\survey.py game`.
 
 ### Running the tools by hand
 
@@ -684,17 +684,17 @@ The same paths, without an agent:
 
 ```powershell
 cd C:\Projects\mygame
-. C:\Projects\dos-decompiler\env.ps1
+. C:\Projects\DOS-Decompiler\env.ps1
 
-python C:\Projects\dos-decompiler\tools\survey.py game
-python C:\Projects\dos-decompiler\tools\triage.py game\MYGAME.EXE
-C:\Projects\dos-decompiler\tools\pipeline.ps1 -Exe game\MYGAME.EXE -OutDir out
+python C:\Projects\DOS-Decompiler\tools\survey.py game
+python C:\Projects\DOS-Decompiler\tools\triage.py game\MYGAME.EXE
+C:\Projects\DOS-Decompiler\tools\pipeline.ps1 -Exe game\MYGAME.EXE -OutDir out
 ```
 
 If typing the full path grates, add the toolkit to `PATH` for the session:
 
 ```powershell
-$env:PATH = "C:\Projects\dos-decompiler\tools;$env:PATH"
+$env:PATH = "C:\Projects\DOS-Decompiler\tools;$env:PATH"
 python survey.py game
 ```
 
