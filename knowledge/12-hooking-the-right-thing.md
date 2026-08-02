@@ -110,3 +110,42 @@ about.
 
 **Read what a counter is compared against, not only what sets it.** The
 comparison is where the meaning is.
+
+## Identify a library by calling it, not by looking at it
+
+Karateka's forty library routines had no discriminating shape -- no FILE
+pointers, no format-string walks, no divides -- and this repository recorded
+that as "cannot be named without a copy of Lattice C 2.1". That was one
+question too early. Reading a routine answers *what does this look like*;
+calling it answers *what does this do*, and only the second can be wrong in a
+way you notice.
+
+`probelib.py` pushes what `strlen` would take and checks that 5 comes back for
+"hello", 3 for "abc" and 0 for "". Nine routines fell out in an afternoon --
+strlen, strcpy, strcat, strcmp, strncmp, a bounded copy, two allocators -- and
+the call sites then confirmed them: `strcpy` and `strcat` are called in pairs
+from four places, each one building `"ks0"` + `".dat"`, and `strncmp` is called
+from the script compiler matching its fourteen command names.
+
+**A probe must be able to fail, and three of the first ones could not.**
+
+* *Two calls returning two different non-zero values* matched six routines as
+  `malloc`. Every counter passes it. Demanding non-overlapping blocks and a
+  refusal for a large enough request cut it to one.
+* Six routines matched `max` because every pair in the battery had `x > y`, so
+  *returns its first argument* passed. One reversed pair fixed it.
+* `stricmp` matched a routine that is case-*sensitive*: the test pushed two
+  arguments, the routine was `strncmp`, and the third argument it read off the
+  stack was garbage that happened to mean "compare zero bytes". **If the family
+  has a three-argument member, push three.**
+
+And a harness bug that produced fifty-nine confident wrong answers at once:
+`comrun.call` writes its return sentinel at `BASE + SP`, which is segment zero.
+Karateka's SS after start-up is 0x16DA, so every routine returned into nothing
+and reported a fault at the same address. **Fifty-nine identical failures are a
+fact about the harness, never about fifty-nine routines.**
+
+The thirty that still have no name are printf's internal helpers and their kin.
+They take state blocks rather than arguments a specification names, so there is
+nothing to probe them against. That is a different and much smaller claim than
+the one this file used to make.
