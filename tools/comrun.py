@@ -147,6 +147,12 @@ def mz_header(data):
 class Machine:
     def __init__(self, image, trace=False, keys=(), files=None):
         self.image = image
+        # A .COM is loaded at BASE+0x100, after its PSP, so an image offset is
+        # `flat - BASE - LOAD`. An MZ image starts at BASE itself, and
+        # subtracting LOAD as well shifts every reported address by 0x100 --
+        # which is enough to make --stop-at never fire and --exec-map disagree
+        # with any disassembly, silently.
+        self.img_bias = BASE + LOAD
         self.trace = trace
         self.keys = list(keys)  # AX values INT 16h will hand out, in order
         self.keys_read = 0
@@ -236,6 +242,7 @@ class Machine:
             self.next_para = SEG + ((len(image) + 0xFFF) >> 4)
         else:
             self._load_mz(image, self.mz)
+            self.img_bias = BASE
             # Above the block DOS would have given the program: the image plus
             # whatever `minalloc` demanded, which for a packed file covers the
             # room the decompressor needs.
@@ -310,11 +317,11 @@ class Machine:
         # longer say. Sixteen entries is enough to see the far call that did it.
         self.recent[self.steps & 511] = addr
         if self.exec_map is not None:
-            self.exec_map.add(addr - BASE - LOAD)
+            self.exec_map.add(addr - self.img_bias)
         if self.steps % self.TICK_EVERY == 0:
             self.ticks += 1
             uc.mem_write(0x46C, struct.pack("<I", self.ticks))
-        off = addr - BASE - LOAD
+        off = addr - self.img_bias
         if off in self.watch:
             self.watch[off](off)
         # Stopping on the *nth* arrival, not the first, is what makes a game
@@ -684,7 +691,7 @@ class Machine:
         except UcError:
             raw = "unreadable"
         hist = [self.recent[(self.steps + i) & 511] for i in range(1, 513)]
-        hist = [a - BASE - LOAD for a in hist if a]
+        hist = [a - self.img_bias for a in hist if a]
         # The interesting moment is not the fault, it is the step that left the
         # program. A fault deep in low memory has already lost the trail, so
         # report the last instructions that were still inside the image.
@@ -695,26 +702,43 @@ class Machine:
             if not (0 <= a < top) and i:
                 left = f"\n  left the image after {hist[i - 1]:#x}"
                 break
-        return (f"{cs:04X}:{ip:04X} (image {flat - BASE - LOAD:#08x}) "
+        return (f"{cs:04X}:{ip:04X} (image {flat - self.img_bias:#08x}) "
                 f"[{raw}]{left}\n  last inside: "
                 + (" -> ".join(f"{a:#x}" for a in inside[-8:])
                    or "(nothing in range)"))
 
-    def call(self, off, budget=20_000_000):
+    def call(self, off, budget=20_000_000, seg=None):
         """Call a routine and stop when it returns.
 
         A sentinel return address is pushed and used as the stop point, so a
         routine that returns normally ends the run rather than falling into
         whatever follows it.
+
+        `seg` makes it a *far* call, which a compiled program needs. Every unit
+        of a Turbo Pascal program is its own segment and every entry point into
+        one is `lcall seg:off`; calling such a routine at a flat image offset
+        runs it with the wrong CS, so its string constants resolve to garbage
+        and it usually returns immediately having drawn nothing. That is what
+        an attempt to photograph The Oregon Trail's hunting screen did -- it
+        landed back on the main menu and looked like the routine had declined
+        to run.
         """
         sentinel = 0xFFF0
-        sp = self.uc.reg_read(UC_X86_REG_SP) - 2
-        self.uc.reg_write(UC_X86_REG_SP, sp)
+        sp = self.uc.reg_read(UC_X86_REG_SP)
+        if seg is not None:
+            sp -= 2                       # a far return needs CS as well
+            self.uc.mem_write(BASE + sp, struct.pack("<H", SEG))
+        sp -= 2
         self.uc.mem_write(BASE + sp, struct.pack("<H", sentinel))
+        self.uc.reg_write(UC_X86_REG_SP, sp)
         self.stopped = None
+        if seg is not None:
+            self.uc.reg_write(UC_X86_REG_CS, seg)
+            start = (seg << 4) + off
+        else:
+            start = BASE + LOAD + off
         try:
-            self.uc.emu_start(BASE + LOAD + off, BASE + sentinel,
-                              count=budget)
+            self.uc.emu_start(start, BASE + sentinel, count=budget)
         except UcError as e:
             self.stopped = self.stopped or f"fault: {e} at {self._where()}"
         return self.stopped or "returned"
@@ -802,7 +826,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary")
-    ap.add_argument("--call", help="after start-up, call this file offset")
+    ap.add_argument("--call", metavar="OFF|SEG:OFF", help="after start-up, call this file offset")
     ap.add_argument("--stop-at", help="stop the start-up run at this offset "
                                       "instead of letting it reach its budget")
     ap.add_argument("--stop-after", type=int, default=1, metavar="N",
@@ -897,7 +921,11 @@ def main():
         if args.ax:
             m.uc.reg_write(UC_X86_REG_AX, int(args.ax, 0))
         before = m.steps
-        why = m.call(int(args.call, 16), budget=args.budget)
+        if ":" in args.call:
+            cseg, coff = (int(x, 16) for x in args.call.split(":"))
+            why = m.call(coff, budget=args.budget, seg=cseg)
+        else:
+            why = m.call(int(args.call, 16), budget=args.budget)
         print(f"call {args.call}: {m.steps - before:,} instructions, {why}")
 
     if args.scancodes and args.handler:
