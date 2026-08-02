@@ -235,6 +235,21 @@ def audit(text, routines, globals_, unplaced=None):
     unnamed = sorted(refs - set(globals_),
                      key=lambda k: ((k[0] or ""), k[1]))
 
+    # The set that has to be covered is what the program transfers control to,
+    # not what has a prologue. Karateka's symbol file read "nothing is unnamed"
+    # against 120 prologues while 56 call targets had no name -- Lattice C's
+    # runtime has no prologues, and neither do the tail entry points the
+    # compiler generates inside its own functions.
+    calls = {int(m.group(1), 16)
+             for m in re.finditer(r"\bcall\s+(?:strict near )?L_([0-9A-Fa-f]{5})",
+                                  text)}
+    uncalled = sorted(calls - set(routines))
+    print(f"  names {len(calls) - len(uncalled)} of {len(calls)} call targets")
+    if uncalled:
+        print("    unnamed: "
+              + ", ".join(f"0x{a:05X}" for a in uncalled[:10])
+              + ("..." if len(uncalled) > 10 else ""))
+
     named = len(refs) - len(unnamed)
     print(f"  covers {named} of {len(refs)} bracketed constants")
     print("    (some of those are displacements into a struct rather than "
