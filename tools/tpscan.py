@@ -227,6 +227,81 @@ def far_targets(img, load_seg):
     return calls, entries
 
 
+def string_ref_score(img, base, lo, hi):
+    """How well `base` explains the string references between `lo` and `hi`.
+
+    Turbo Pascal 5.0 passes a string constant as a far pointer built in place:
+
+        bf <off16>      mov di, offset-of-the-length-byte
+        0e              push cs
+        57              push di
+
+    The offset is relative to the segment the *referring code* is in, so a
+    candidate segment base can be tested against the code that would live in
+    it: score how many of those references land on something that is actually
+    a Pascal string. The right base scores high and a wrong one scores near
+    zero, because a length byte followed by exactly that many printable
+    characters is not a thing random offsets hit.
+
+    Returns (resolved, total).
+    """
+    resolved = total = 0
+    for i in range(lo, max(lo, hi - 5)):
+        if img[i] != 0xBF or img[i + 3] != 0x0E or img[i + 4] != 0x57:
+            continue
+        total += 1
+        at = base + int.from_bytes(img[i + 1:i + 3], "little")
+        if not (base <= at < hi):
+            continue
+        n = img[at]
+        if 2 <= n <= 200 and at + 1 + n <= hi and \
+                all(0x20 <= c < 0x7F for c in img[at + 1:at + 1 + n]):
+            resolved += 1
+    return resolved, total
+
+
+def rescue_by_strings(img, calls, keep, code_end_para, factor=3):
+    """Give back the segments that are called once and never at offset zero.
+
+    `segments` keeps a candidate on two calls, or on one if it is an
+    initialiser. A unit that is far-called exactly once, at some offset other
+    than zero, satisfies neither -- and such units exist. The Oregon Trail's
+    store is one: 13,952 bytes, entered once from the main program at offset
+    0x22B8, holding every price in the game. Folded into its neighbour, its
+    string references resolve against the wrong base and it looks as though
+    nothing in the program addresses the store's text at all.
+
+    So test the base directly. A candidate is restored when the references in
+    the span it would own resolve against *it* far better than against the
+    segment that would otherwise swallow them. That is independent evidence --
+    it comes from the string idiom, not from the call graph that already
+    failed -- which is what makes it worth trusting.
+    """
+    restored = []
+    changed = True
+    while changed:            # restoring one segment changes its neighbours'
+        changed = False       # spans, so keep going until nothing moves
+        for cand in sorted(set(calls) - set(keep)):
+            order = sorted(keep)
+            prev = max((s for s in order if s < cand), default=None)
+            nxt = min((s for s in order if s > cand), default=code_end_para)
+            if prev is None or not (prev < cand < nxt):
+                continue
+            lo, hi = cand << 4, nxt << 4
+            if hi - lo < 0x200:
+                continue
+            mine = string_ref_score(img, lo, lo, hi)
+            theirs = string_ref_score(img, prev << 4, lo, hi)
+            if mine[1] < 8 or mine[0] < 8:
+                continue
+            if mine[0] >= factor * max(theirs[0], 1):
+                keep.add(cand)
+                restored.append((cand, mine, theirs))
+                changed = True
+                break
+    return restored
+
+
 def segments(calls, entries, code_end_para, min_calls=2):
     """Keep the candidate segments that can actually be segments.
 
@@ -322,6 +397,14 @@ def main():
 
     calls, entries = far_targets(img, load_seg)
     segs, dropped = segments(calls, entries, dgroup)
+    kept = set(segs)
+    restored = rescue_by_strings(img, calls, kept, dgroup)
+    if restored:
+        segs = sorted(kept)
+        for s, mine, theirs in restored:
+            print(f"  restored segment {s:#06x}: its own base explains "
+                  f"{mine[0]}/{mine[1]} string references, the neighbour's "
+                  f"{theirs[0]}")
     rt = None
     err = img.find(b"Runtime error ")
 
