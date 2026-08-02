@@ -235,3 +235,32 @@ counter, let alone say what it counts.
 Quote both figures whenever you quote either. 64% of the addresses and 90% of
 the references are the same fact seen from two ends, and the gap between them
 is the shape of what is left.
+
+## The enumerator has to match the language, and a blind one reports zero
+
+Karateka is Lattice C and its routines open `push bp`. That enumerator, pointed
+at the other three games in this repository, finds **none** -- and `probelib.py`
+duly reported *0 of 0 matched a specification*, which reads exactly like "there
+is no C library in here" and is a different statement altogether. It had nothing
+to probe.
+
+| | prologues | call targets |
+|---|---|---|
+| Karateka (Lattice C) | 120 | — |
+| Hard Hat Mack | **0** | 250 |
+| Zaxxon | **0** | 87 |
+| ParaTrooper | **0** | 28 |
+
+All three are hand-written assembly, and Hard Hat Mack is a mechanical 6502
+translation on top of that -- 427 `cmc` instructions to reconcile two processors
+that disagree about the carry flag. Enumerating by *call target* instead finds
+their routines, and probing those 250 gives a clean **0 of 250**: a real
+negative result. There is no C runtime in it.
+
+That prediction was written down before the run, which is the only reason the
+zero means anything. `probelib.py` now says which case it is in rather than
+printing a zero that could be either.
+
+**A tool built on one program's conventions will fail silently on the next one,
+and the failure will look like a measurement.** Check that the enumerator found
+candidates before believing what the battery says about them.

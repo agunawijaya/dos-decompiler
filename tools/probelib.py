@@ -237,12 +237,40 @@ def main():
     ap.add_argument("--files", help="a folder the program may open")
     ap.add_argument("--at", action="append", type=lambda s: int(s, 0),
                     default=[], help="probe only these; repeatable")
+    ap.add_argument("--entries", choices=("auto", "prologue", "calls"),
+                    default="auto",
+                    help="how to find routines: C prologues, call targets, or "
+                         "prologues falling back to calls")
     args = ap.parse_args()
 
     p = Probe(args.binary, args.warmup, args.ds, args.files)
     img = p.m.image
-    todo = args.at or [k for k in range(len(img) - 2)
-                       if img[k] == 0x55 and img[k + 1] in (0x8B, 0x83, 0x2B)]
+    prologues = [k for k in range(len(img) - 2)
+                 if img[k] == 0x55 and img[k + 1] in (0x8B, 0x83, 0x2B)]
+    calls = sorted({(k + 3 + struct.unpack_from("<h", img, k + 1)[0]) & 0xFFFF
+                    for k in range(len(img) - 2) if img[k] == 0xE8}
+                   & set(range(len(img))))
+    how = args.entries
+    if how == "auto":
+        how = "prologue" if prologues else "calls"
+    todo = args.at or (prologues if how == "prologue" else calls)
+
+    # "0 of 0 matched" reads exactly like "nothing in this library is a
+    # standard function", and it is not the same statement at all. Hard Hat
+    # Mack has 250 routines and zero `push bp` prologues, because it is
+    # translated 6502 rather than compiled C -- the enumerator was blind, not
+    # the battery. Say which.
+    if not todo:
+        print(f"no candidates: {len(prologues)} prologues, {len(calls)} call "
+              f"targets.\nNothing was probed, which is not a result. Pass "
+              f"--entries or --at.")
+        return 1
+    if how == "calls" and not prologues:
+        print(f"no `push bp` prologues at all -- this is not compiled C, so "
+              f"there is probably\nno C runtime in it either. Probing the "
+              f"{len(calls)} call targets anyway; a clean\nzero here is a "
+              f"finding, an empty run is not.\n")
+
     battery, arith = tests(p)
     print(f"probing {len(todo)} routines against {len(battery)} "
           f"specifications\n")
