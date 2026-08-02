@@ -147,11 +147,17 @@ def mz_header(data):
 class Machine:
     def __init__(self, image, trace=False, keys=(), files=None):
         self.image = image
-        # A .COM is loaded at BASE+0x100, after its PSP, so an image offset is
-        # `flat - BASE - LOAD`. An MZ image starts at BASE itself, and
-        # subtracting LOAD as well shifts every reported address by 0x100 --
-        # which is enough to make --stop-at never fire and --exec-map disagree
-        # with any disassembly, silently.
+        # Image offsets are `flat - BASE - LOAD` for both .COM and MZ, because
+        # this loader places an MZ image after the PSP as well.
+        #
+        # A note against repeating a mistake: this was "corrected" once to
+        # `BASE` for MZ, on the theory that an MZ image starts at BASE and the
+        # extra 0x100 was why --stop-at never fired on a hunting routine. Both
+        # halves were wrong. --stop-at never fired because the routine returns
+        # before reaching that address, and the change dropped the agreement
+        # between a listing and an execution trace from 99.6% to 31.6%. The
+        # 31.6% run is the one that identified the error: its unmatched
+        # addresses were all exactly 0x100 above decoded ones.
         self.img_bias = BASE + LOAD
         self.trace = trace
         self.keys = list(keys)  # AX values INT 16h will hand out, in order
@@ -242,7 +248,6 @@ class Machine:
             self.next_para = SEG + ((len(image) + 0xFFF) >> 4)
         else:
             self._load_mz(image, self.mz)
-            self.img_bias = BASE
             # Above the block DOS would have given the program: the image plus
             # whatever `minalloc` demanded, which for a packed file covers the
             # room the decompressor needs.
@@ -826,6 +831,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary")
+    ap.add_argument("--poke", metavar="OFF=VAL[,...]", default="",
+                    help="write a word at an image offset before --call. A "
+                         "routine usually refuses to run without the state a "
+                         "real game would have reached first: The Oregon "
+                         "Trail's hunting screen tests the bullet count and "
+                         "returns immediately when it is zero.")
     ap.add_argument("--call", metavar="OFF|SEG:OFF", help="after start-up, call this file offset")
     ap.add_argument("--stop-at", help="stop the start-up run at this offset "
                                       "instead of letting it reach its budget")
@@ -916,6 +927,12 @@ def main():
             print("  the program printed:")
             for line in text.split("\n"):
                 print(f"      {line}")
+
+    for item in (x for x in args.poke.split(",") if x.strip()):
+        off, _, val = item.partition("=")
+        at, v = int(off, 0), int(val, 0)
+        m.uc.mem_write(BASE + at, struct.pack("<H", v))
+        print(f"poked image {at:#07x} = {v}")
 
     if args.call:
         if args.ax:
