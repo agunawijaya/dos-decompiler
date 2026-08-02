@@ -264,3 +264,35 @@ printing a zero that could be either.
 **A tool built on one program's conventions will fail silently on the next one,
 and the failure will look like a measurement.** Check that the enumerator found
 candidates before believing what the battery says about them.
+
+## Count bytes, not references
+
+Karateka's globals reached "312 of 312 addresses named, all 1,642 references"
+and I reported it as complete. It was true and it was the wrong denominator.
+
+The data segment is 59,670 bytes. Naming every address the code *mentions* says
+nothing about the bytes *between* those mentions, and measured by byte the
+segment was **40% accounted for** at the moment the reference count hit 100%.
+
+Mapping it as spans took it to 98.7%, and the shape of what was missing is the
+lesson:
+
+| | |
+|---|---|
+| 31,392 bytes | pure zero — buffers files are read into |
+| 16,000 | the off-screen frame, already known |
+| ~5,000 | byte code, tables, strings |
+| 1,447 | genuinely unidentified, in gaps under 200 bytes |
+
+**Half the data segment is empty.** The largest single object in the program is
+24,260 bytes of nothing, waiting for sprites. Empty is *finished*; unread is
+*work*; and a reference count cannot tell them apart because nothing references
+the middle of a buffer.
+
+Two rules, and the second is the one that keeps catching me:
+
+- **A percentage needs its denominator stated in the same sentence.** "100% of
+  references" and "40% of bytes" were simultaneously true of the same program.
+- **When a metric reaches 100%, that is the moment to ask what it is measuring**
+  — not the moment to stop. Every completion claim in this repository that had
+  to be withdrawn was a real number with an unstated denominator.
