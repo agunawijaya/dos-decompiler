@@ -399,6 +399,92 @@ A total tells you how far you have to go. An attribution tells you where to
 stand. And the cost is usually a stack read: the caller is already on the
 stack at the moment you are already stopped.
 
+## When the program supplies its own hardware
+
+Every hook above reads what the program does. This one is about what the
+program *expects*, and it is a different failure: the emulator was faithful
+everywhere except one place, and the one place was load-bearing.
+
+The Oregon Trail's hunting mini-game would not run. It was entered, it drew,
+its allocator and its overlap test both executed — and its hunter never took a
+step. Raising the instruction budget from 1.5 to 3 billion changed nothing at
+all: **the same 18,900 distinct addresses, the same 103 keyboard reads, the
+same picture.** A longer run that is byte-identical is not a run that needs
+more time.
+
+`comrun.py` did not say where the budget ran out, only that it had, so the only
+move left was to raise it again. It says now, and the answer was five
+instructions:
+
+```nasm
+000764F  cmp word [0x16B4], 0       ; the high word of a 32-bit counter
+0007654  jg 0x765F
+0007656  jl 0x764F
+0007658  cmp word [0x16B2], 1       ; the low word
+000765D  jb 0x764F                  ; no tick yet -- go round again
+```
+
+and the only thing that moves that counter is at `0x10441`:
+
+```nasm
+0010441  push ax..bp
+001044C  mov ax, 0x3348 / mov ds, ax   ; DGROUP, hardcoded -- an ISR does this
+0010451  les ax, [0x16B2] / add ax, 1 / adc dx, 0
+001046F  iret
+```
+
+The game **hooks the timer itself** — `SetIntVec(0x1C, …)` at nine call sites,
+two of them wrapped around the mini-game — and an emulator that ticks the BIOS
+word at `0040:006C` serves programs that read `0040:006C`, which this one does
+not. `--timer-isr INT[,N]` now delivers the interrupt to whatever handler the
+program installed, pushing a real `FLAGS/CS/IP` frame so the handler's `iret`
+resumes where it left off.
+
+**Three things had to be right, and each was wrong first.** They are worth
+listing because the same three will recur on any program that hooks anything.
+
+| | |
+|---|---|
+| **Take an interrupt number, not an address.** | The game ships packed. Early on, the handler's address still holds compressed bytes; jumping there gave 99,999 deliveries into rubbish — no interrupts requested, no ports written, no keys read. Reading the vector at each delivery waits for the program to install its handler, with no need to know when unpacking finishes. |
+| **Respect `IF`.** | Hardware does not deliver a maskable interrupt while interrupts are disabled, and Turbo Pascal's `Crt` closes `cli` around the port writes in `Sound` and `Delay`. Fixing that exposed a second fault underneath: **Unicorn starts with `FLAGS` at `0x0002`** — a state no DOS program has ever been handed — so every delivery was then correctly refused. Invisible until something first tried to deliver one. |
+| **Move `CS` with the jump.** | Unicorn keeps a segment base and a 16-bit `IP` separately. Restarting at the handler's linear address while `CS` still names the interrupted segment leaves the two disagreeing, and when the handler sits *below* that base the `IP` underflows and it never runs. One delivery ended the run at 26,900,030 instructions, at the same instruction every time; every 20,000 crashed after two deliveries and every 200,000 after one, so frequency was never the variable. |
+
+**What transfers, and it is not about timers.** An emulator is a set of
+promises, and a program only notices the ones it depends on. This toolkit had
+already learned that once — Turbo Pascal reaches DOS by far-calling through the
+vector table rather than executing `int`, so a zeroed table sends the program
+to `0000:0000` in silence. This is the same lesson from the other side: the
+table was filled in, and the *stubs in it were never invoked*. When a run stops
+making progress, ask which promise the program is relying on, not how much
+longer it needs.
+
+**And a report that names a place is worth more than one that names a
+symptom.** "Budget exhausted" led to three runs and four and a half billion
+instructions. "Budget exhausted at 15FD:1784 (image 0x007654)" led to the
+answer in one disassembly.
+
+## The referee is not the deliverable
+
+The hunting screen was chased for hours as a photograph — drive the game to it,
+dump the framebuffer — and every frame came back a half-drawn mess, because the
+program was frozen mid-redraw at exactly the point above. Three runs with
+different budgets and different keystrokes produced **pixel-identical** images,
+which should have been read as evidence rather than shown as a result.
+
+It did not need running at all. The field is a generator, and all of it is
+static in the file: sprite tables of `(srcX, srcY, w, h)` with a stride of 8, a
+per-region list of permitted kinds, `Random(4) + 5` objects, `x = Random(318 −
+w)`, `y = Random(199 − h)`, redraw on overlap. Sixty lines of Python reading
+those tables draws the screen — with its animals, whose entry rule is a
+separate routine — and the *execution map from the emulator then confirms that
+all eight routines it reimplements actually ran*.
+
+That is the correct division of labour, and it is stated at the top of
+`comrun.py` itself: the static render is the deliverable, this is the referee.
+Reversing them cost most of a session. When a screen resists being
+photographed, check whether it can be *computed* first — and if the answer
+involves a table and a `Random`, it can.
+
 ## The referee that ships
 
 Everything above was found by running Hard Hat Mack. That referee cannot ship:

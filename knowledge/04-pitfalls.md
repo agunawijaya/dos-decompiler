@@ -90,6 +90,40 @@ dynamic program only; the reported score is the unpinned similarity.
 The symptom is recognisable: a run where many matches share an identical top
 score is reporting a constant, not a measurement.
 
+## Driving a program under emulation
+
+**A queue of keystrokes vanishes in one screen.** The Oregon Trail consumed 88
+keys in 88 reads without ever pausing. Turbo Pascal opens most prompts with
+`while KeyPressed do ReadKey` to throw away type-ahead, and an emulator that
+answers "yes, a key is waiting" hands that loop the entire queue. Answering
+"no" instead hangs the opposite idiom, `repeat until KeyPressed`. Both are
+`INT 16h AH=01` and no fixed answer is right — what separates them is
+persistence, so `--poll-patience N` says "nothing waiting" until the question
+has been repeated N times since the last blocking read. Feeding *more* keys
+makes it strictly worse, which is the wrong direction to reach for first.
+
+**Two screens can look like one broken one.** Every hunting-screen capture came
+back with two screens overlapping and the text unreadable, which reads like a
+renderer bug. It was not: the program was frozen mid-redraw, and the give-away
+was that three runs with different budgets and different keystrokes produced
+**pixel-identical** images. A frozen frame is a symptom to trace, not a picture
+to publish.
+
+**Raising the budget is almost never the fix.** If a longer run produces the
+same distinct-address count, the same read count and the same frame, it stopped
+making progress long before either limit. Report *where* the budget ran out,
+not just that it did — the difference between "budget exhausted" and "budget
+exhausted at 15FD:1784" was three runs and four and a half billion instructions
+against one disassembly.
+
+**Do not enter a compiled routine in the middle to look at its screen.** It gets
+you the code without the state. The Oregon Trail's hunting routine, called
+directly with every plausible variable poked, died in a far call through a null
+driver vector — because the BGI driver is installed on the way in, and there is
+no way in but the menu. The general form: a `--call` gives you a routine whose
+caller never ran, and the failures it produces are all consequences of that one
+fact.
+
 ## Analysis
 
 **Small model explains suspiciously few relocations.** Sopwith has 2

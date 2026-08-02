@@ -144,6 +144,30 @@ advances, both of which exist because without them a title screen waits
 forever. `--stop-at ADDR --stop-after N` stops on the Nth arrival, which is how
 you look at a frame other than the first.
 
+Two flags exist because a program can supply its own hardware, and both are off
+by default:
+
+- `--poll-patience N` — Turbo Pascal opens prompts with `while KeyPressed do
+  ReadKey`, and an emulator that always says a key is waiting feeds that flush
+  the whole `--keys` queue. This answers "nothing waiting" until asked N times
+  since the last blocking read, which tells a flush from a `repeat until
+  KeyPressed` wait by how long each persists.
+- `--timer-isr INT[,N]` — a game that hooks the timer and waits on a counter its
+  own handler increments is not served by ticking `0040:006C`. This delivers the
+  interrupt to whatever handler the program installed, pushing a real
+  `FLAGS/CS/IP` frame. Give it a *number*, not an address: the vector is read at
+  each delivery, so nothing is sent until the program has hooked it — which
+  matters for a packed file, where the handler's address holds compressed bytes
+  until the stub has run.
+
+**The static render is the deliverable and this is the referee.** If a screen
+resists being photographed, check whether it can be computed from the file
+first. The Oregon Trail's hunting field was pursued for hours as a screenshot
+and every frame came back frozen mid-redraw; it turned out to be a generator —
+sprite tables, a per-region list, `Random(4)+5` objects placed by rejection
+sampling — and sixty lines reading those tables draw it. `knowledge/12` has the
+case.
+
 `knowledge/08-com-reconstruction.md` covers the traps — chiefly a stub that
 reloads CS so that half the file is addressed from a different base, which
 fails silently and confusingly if missed, and which is not always at offset 0:
