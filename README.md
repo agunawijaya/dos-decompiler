@@ -157,11 +157,41 @@ route:
 |---|---|
 | Rebuild | **byte-identical**, SHA-256 checked outside the tool |
 | Layout — the CS-reloading entry stub | detected, no manual flags |
-| Instructions recovered, code region | **87.7%** (4,674 of 5,328 bytes) |
-| Pinned to fixed bytes | 236 of 2,017, all encoding-form alternates |
+| Instructions recovered, code region | **90.9%** (4,841 of 5,328 bytes) |
+| Pinned to fixed bytes | 178 of 2,017, all encoding-form alternates |
+| The rest of the code region | 125 bytes, and **none of it looks like code** |
 
 Written up in [`tests/com/CASE-STUDY.md`](tests/com/CASE-STUDY.md), including
 the four bugs the attempt exposed.
+
+And on **Karateka** (1984), an 87,990-byte MZ — the largest program the toolkit
+has taken apart, and the one that paid for most of what is in `comrec.py`:
+
+| Stage | Result |
+|---|---|
+| Rebuild | **byte-identical**, SHA-256 checked outside the tool, header and all |
+| Layout | four relocations and one `DS` load: an MZ that is really a `.COM` |
+| Instructions recovered, code region | **91.9%** (25,558 of 27,805 bytes) |
+| Counting pinned instructions as code | **99.1%** |
+| The rest | 252 bytes, and **none of it looks like code** |
+| Compiler identified | **Lattice C 2.1**, from its own data segment |
+
+It went 85.0% → 91.9% in one sitting, and not by finding a cleverer
+disassembler. The missing 15% was a round limit reported in the same voice as a
+measurement, plus six `switch` tables skipped because a regex read a hex
+displacement as decimal. Both are in
+[`knowledge/11-unreached-code.md`](knowledge/11-unreached-code.md).
+
+**All four `.COM`-route programs now report the same last line** — *nothing in
+it looks like unreached code* — which is a stronger claim than any percentage,
+because it says what the remainder *is* rather than how big it is.
+
+| | code region | recovered | residue |
+|---|---|---|---|
+| Karateka | 27,805 | 91.9% | 252 bytes, tables and padding |
+| Hard Hat Mack | 27,787 | 78.2% | 5,394 bytes, artwork, tables and strings |
+| ParaTrooper | 5,328 | 90.9% | 125 bytes |
+| Zaxxon | 8,413 | 75.8% | 1,796 bytes |
 
 ### What this does *not* give you
 
@@ -788,6 +818,8 @@ knowledge/
   08-com-reconstruction.md   the .COM route, which reaches byte-identity in one run
   09-lessons-from-contrap.md what a reconstruction done without this toolkit taught it
   10-data-beside-the-executable.md  the ninety files that are not the program
+  11-unreached-code.md       code nothing branches to, and the 15% that was not data
+  12-hooking-the-right-thing.md  running a program to find what reading cannot
 signatures/                  C runtime fingerprints: MS C 5.0, MS C 5.1, Watcom
 tests/sopwith/               the validation fixture and full case study
 tests/com/                   .COM fixtures, rebuilt byte-identically on every run

@@ -43,9 +43,9 @@ Strip the 512-byte header, treat the image as a `.COM` with base 0, take the
 entry from `CS:IP`, and it reconstructs:
 
 ```
-instructions : 9,740 disassembled (918 pinned)
+instructions : 10,589 disassembled (987 pinned)
 code region  : 0x0000..0x6C9D  (27,805 bytes)
-  recovered  : 23,628 bytes as instructions (85.0% of the code region)
+  recovered  : 25,554 bytes as instructions (91.9% of the code region)
 BYTE-IDENTICAL
 ```
 

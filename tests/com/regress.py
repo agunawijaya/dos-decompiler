@@ -141,6 +141,32 @@ EXPECTATIONS = {
          # without saying so -- nine routines lost on Zaxxon that way.
          "mov dl, 0x43"],                      # inside the third
     ),
+    # The compiler's own `switch`: the table is the jump's displacement and the
+    # register is the index. Read as decimal, `0x...` did not match the pattern
+    # at all and the pass reported nothing -- Karateka has six of these. All
+    # three arms coming back proves the displacement was read as the table.
+    "indexed": (
+        40.0,
+        ["jump tables : cs:0x",                # reported, from comrec's output
+         "-> 3 targets",
+         "mov dl, 0x41",
+         "mov dl, 0x42",
+         "mov dl, 0x43"],
+    ),
+    # A `switch` table sitting directly behind the arms it names, with nothing
+    # anywhere pointing at it -- so detect_jump_tables cannot find it and the
+    # gap sweep vetoes the run over the `insw` the table's own bytes contain.
+    # All three arms coming back proves the table was read backwards from the
+    # end of the run; `never_a` staying out (see FORBIDDEN) proves a table with
+    # no code in front of it was refused.
+    # 16.5% of the file comes back without the pass and 38.1% with it, so the
+    # floor separates the two rather than merely being cleared.
+    "casetable": (
+        35.0,
+        ["mov dl, 0x41",                       # inside the first arm
+         "mov dl, 0x42",                       # inside the second
+         "mov dl, 0x43"],                      # inside the third
+    ),
 }
 
 
@@ -150,6 +176,11 @@ EXPECTATIONS = {
 # wrong.
 FORBIDDEN = {
     "jumptable": ["mov dl, 0x43"],   # behind a data pointer; must stay data
+    # A well-formed case table with no function in front of it. Every content
+    # test passes and it must still be refused: what the pass is entitled to
+    # claim is a run the sweep would have taken but for its tail, not a table
+    # found anywhere.
+    "casetable": ["mov dl, 0x58"],
 }
 
 

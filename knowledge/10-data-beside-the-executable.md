@@ -74,25 +74,78 @@ answer is a magic string. **Check for a known format before reverse engineering
 a bespoke one** — the cost of looking is a second and the cost of not looking is
 a day.
 
-## Where this stops, deliberately
+## Finding the container is not decoding the records
 
-Finding the container is not decoding the records, and the two should not be
-confused in a report.
+The two should not be confused in a report, and here they were separated by
+about a day of being wrong in public.
 
 Karateka's records open with three bytes that read like `(width, height, ?)` and
-continue with something compressed. `0x7B` as *escape, value, count* decodes 282
+continue with something compressed. `0x7B` as *escape, value, count* decoded 282
 of 284 records without running off the end — which sounds convincing and proves
-very little, because almost any rule decodes *something*. The test that matters
-is whether the decoded length equals `width × height`, and it does so for **10
-of 284**.
+very little, because almost any rule decodes *something*. The test that looked
+like it mattered was whether the decoded length equals `width × height`, and
+that held for **10 of 284**.
 
-So the rule is close and wrong, and close is the dangerous kind of wrong: a
-compression rule that is nearly right produces pictures that are nearly right,
-and nothing in the output says which. It is recorded as undecoded.
+So the rule was recorded as close and wrong, and close is the dangerous kind of
+wrong: a compression rule that is nearly right produces pictures that are nearly
+right, and nothing in the output says which.
 
-The way to settle it is not to guess harder. Run the program under `comrun.py`,
-capture what it puts on the screen, and work backwards — the same route that
+**Both halves of that turned out to be mistaken, in opposite directions.** The
+rule was right apart from an off-by-one — `0x7B v c` emits `v` and then `c` more,
+so `c + 1` bytes — and the *test* was malformed. The game's decoder yields one
+byte per call and stops when the caller stops asking, so a record routinely
+carries more than any one drawing consumes; one 90-byte record supplied 21 bytes
+and that was correct. Asking "does this record decode to exactly `w × h`?" is a
+question about a particular drawing, not about the format. With the off-by-one
+fixed and the question dropped, all **666 records decode**.
+
+Two things generalise, and the second is the expensive one:
+
+- A decoder that yields one byte per call has no notion of *decoding a record*.
+  Do not write a validator that insists on consuming one.
+- **A stalled metric is sometimes measuring the wrong thing.** The count sat at
+  338 and could be curve-fitted up to 491 by trying `(w+1)*h` and its relatives.
+  Fitting moved the number and taught nothing; reading the routine moved it to
+  666. When a score plateaus and only responds to tweaks in the *scoring*, that
+  is the signal to stop scoring and go read.
+
+The way to settle it was not to guess harder. Running the program under
+`comrun.py`, hooking the buffer a `.DAT` loads into and asking which
+instructions read it named the decoder in four passes — the same route that
 settled Hard Hat Mack's scanline table after static reasoning had stalled.
+
+## Open the files before decoding them
+
+Karateka's fighting was recorded as unread through four documents. It is not in
+the executable at all. It ships beside it as **plain ASCII**, in three files
+totalling 150 blocks of animation script, one block per move:
+
+```
+set_pos,11 12 pal08
+inc_x,4
+set_tune,0
+set_fig,2 -4 165
+set_fig,47 15 131
+```
+
+Nothing had to be reverse engineered to read that. `survey.py` reported the
+files, `head` would have shown what was in them, and the reason nobody looked is
+that the folder's *hard* format — the run-length sprite records — had set the
+expectation that everything else would be hard too.
+
+Two habits follow, and they cost seconds each:
+
+* **`head` every unknown file before writing a decoder for it.** Text announces
+  itself instantly and no amount of static analysis substitutes for looking.
+* **Having just cracked a hard format, assume nothing about the next file.**
+  The same folder holds run-length column-major sprites, a raw uncompressed
+  bitmap (`.BCG`: a length word, then 80 bytes per scanline), and readable
+  source text. Three formats, one directory, sharing no assumptions.
+
+The related trap is the mirror image: the scripts turned out to be *compiled* at
+load into a byte code, so the routine that reads them is a compiler and not,
+as this repository had it for a while, an interpreter. **A program that ships
+text still need not interpret text.**
 
 ## What to do when you are handed a folder
 

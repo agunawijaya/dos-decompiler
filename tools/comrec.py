@@ -443,11 +443,16 @@ class Reconstructor:
                       default=0)
 
         for i, (off, (_, text, _)) in enumerate(order):
-            m = re.fullmatch(r"(?:jmp|call) word \[cs:(\w+)(?: \+ (\d+))?\]",
-                             text)
+            # The displacement is written in hex, and matching it as `\d+` cost
+            # Karateka six tables: `jmp word [cs:si + 0x163e]` failed to match
+            # at all, so the most direct evidence a program can offer about
+            # where its tables are was being skipped in silence.
+            m = re.fullmatch(
+                r"(?:jmp|call) word \[cs:(\w+)(?: \+ (0x[0-9a-f]+|\d+))?\]",
+                text)
             if not m:
                 continue
-            reg, disp = m.group(1), int(m.group(2) or 0)
+            reg, disp = m.group(1), int(m.group(2) or "0", 0)
 
             # The base is loaded a few instructions earlier, usually as the
             # last thing before the jump. Look back a short way and no further:
@@ -459,6 +464,17 @@ class Reconstructor:
                 if pm:
                     base = int(pm.group(1), 0) + disp
                     break
+            # No constant went into the register, so the register is the index
+            # and the displacement is the table:
+            #
+            #     mov si, ax / cmp si, 5 / jae ... / shl si, 1
+            #     jmp word [cs:si + 0x54e7]
+            #
+            # which is what a C compiler emits for a dense `switch`. Karateka
+            # uses it six times and Zaxxon's form -- a base register built up by
+            # hand -- not at all, so both spellings have to be read.
+            if base is None and disp:
+                base = disp
             seg = self.segment_of_file(off)
             if base is None or seg is None or not seg.contains_addr(base):
                 continue
@@ -666,6 +682,36 @@ class Reconstructor:
             i = j
         return out
 
+    def decoded_gaps(self, min_len=6):
+        """Runs that carry no decoded instruction at all, pinned ones included.
+
+        `gaps` is built on `coverage`, which counts only instructions that
+        survived verification -- a pinned one is emitted as `db`, so it reads
+        there as data and a run of unclaimed bytes appears to extend through it.
+
+        For anything that cares about *where the unclaimed bytes stop*, that is
+        the wrong boundary. Karateka has a two-byte pinned instruction directly
+        behind a ten-entry jump table, and reading the run as ending two bytes
+        late puts a pinned opcode in the table's last slot, which is enough to
+        lose the 758 bytes of handlers the table names.
+        """
+        known = bytearray(len(self.image))
+        for off, (size, _, _) in self.decoded.items():
+            for i in range(off, min(off + size, len(self.image))):
+                known[i] = 1
+        out, i, n = [], 0, len(self.image)
+        while i < n:
+            if known[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and not known[j]:
+                j += 1
+            if j - i >= min_len:
+                out.append((i, j))
+            i = j
+        return out
+
     def sweep_gaps(self):
         """Claim gaps that are unmistakably code, and only those.
 
@@ -730,6 +776,308 @@ class Reconstructor:
                 self.extra.add(start)
                 self.swept[start] = end
                 found += 1
+        return found
+
+    def detect_register_callbacks(self):
+        """`mov reg, imm` that a `call reg` elsewhere turns into a call.
+
+        `detect_dispatch_targets` resolves an indirect jump whose pointer lives
+        in *memory*, by finding the constant written there. This is the same
+        idea one step further out, where the pointer is passed in a register and
+        the call is in a different routine entirely:
+
+            09EE  mov ax, 0x9fa      ; two routines, by address
+            09F1  mov bx, 0x9ff
+            09F4  call 0xa12
+            ...
+            0A12  push bx / push ax / ... / pop bx / call bx
+
+        Hard Hat Mack's joystick calibration is written that way -- 0xA12 takes
+        two callbacks and calls them between its own prompts -- and the two
+        stubs it is handed are reachable by no other route. Looking back from
+        `call bx` finds only the `pop`, because the value was set by the caller,
+        so no amount of local reasoning inside the callee will do it.
+
+        Three conditions, and the middle one is what keeps it honest:
+
+        * the program contains `call reg` or `jmp reg` at all -- otherwise a
+          constant that looks like an address is just a constant;
+        * the immediate lands in a run nothing has claimed, and that run
+          **disassembles as plausible code** by the test in `_decodes_cleanly`;
+        * and the run has not already been claimed by something better.
+
+        Without the second condition this is a licence to treat every 16-bit
+        constant in the program as an entry point, which on Zaxxon means the
+        artwork.
+
+        Returns the number of new entry points found.
+        """
+        if not any(re.fullmatch(r"(?:call|jmp) (?:ax|bx|cx|dx|si|di|bp)", t)
+                   for _, (_, t, _) in self.decoded.items()):
+            return 0
+        runs = [(a, b) for a, b in self.decoded_gaps(min_len=4)]
+        found = 0
+        for off, (_, text, _) in sorted(self.decoded.items()):
+            m = re.fullmatch(r"mov (?:ax|bx|cx|dx|si|di|bp), (0x[0-9a-f]+)", text)
+            if not m:
+                continue
+            seg = self.segment_of_file(off)
+            addr = int(m.group(1), 16)
+            if seg is None or not seg.contains_addr(addr):
+                continue
+            dest = seg.file_off(addr)
+            run = next(((a, b) for a, b in runs if a <= dest < b), None)
+            if run is None or dest in self.extra:
+                continue
+            if self._decodes_cleanly(dest, run[1], seg):
+                self.extra.add(dest)
+                found += 1
+        return found
+
+    def classify_residue(self, lo, hi):
+        """What the bytes of the code region that are *not* code actually are.
+
+        A single "78.2% recovered" reads as "21.8% missing", and for three of
+        the four games measured here that is wrong. The code region is found by
+        trimming large data blocks off the *ends* of the file, so data that
+        lives between the routines stays inside it and counts against the
+        figure. Hard Hat Mack keeps 1,201 bytes of CGA scanline offsets, 1,171
+        of artwork and 793 of HUD strings in among its code; not one of those
+        bytes is missing, and only 36 bytes of its residue even look like code.
+
+        Reporting a bare percentage invites the reader -- and the next agent --
+        to go hunting for a fifth of a program that is not lost. So name the
+        kinds instead, cheaply and conservatively:
+
+            zero fill      nine tenths zero: padding, or a table not yet filled
+            text           three fifths printable
+            pointer table  words that mostly land inside the code region
+            code-shaped    disassembles end to end with nothing implausible
+            other          everything else, which is mostly artwork
+
+        `code-shaped` is the only line worth chasing, and it is deliberately
+        the strictest: a run that meets it is one `sweep_gaps` refused for a
+        reason worth going back to look at.
+        """
+        seg = self.segment_of_file(lo)
+        kinds = dict(text=0, zero=0, table=0, code=0, other=0)
+        # decoded_gaps, not gaps: a pinned instruction is code spelled in bytes,
+        # and counting it here would report Karateka's 1,997 pinned bytes as
+        # artwork -- eight times the size of its actual residue.
+        for a, b in self.decoded_gaps(min_len=1):
+            if not (lo <= a < hi):
+                continue
+            b = min(b, hi)
+            n, body = b - a, self.image[a:b]
+            if n <= 0:
+                continue
+            if body.count(0) >= 0.9 * n:
+                kinds["zero"] += n
+            elif sum(1 for x in body if 0x20 <= x < 0x7F) >= 0.6 * n and n >= 4:
+                kinds["text"] += n
+            else:
+                w = [body[i] | (body[i + 1] << 8) for i in range(0, n - 1, 2)]
+                hit = sum(1 for x in w
+                          if seg is not None and seg.contains_addr(x)
+                          and lo <= seg.file_off(x) < hi)
+                if len(w) >= 3 and hit >= 0.7 * len(w):
+                    kinds["table"] += n
+                elif n >= 8 and seg is not None and self._decodes_cleanly(a, b, seg):
+                    kinds["code"] += n
+                else:
+                    kinds["other"] += n
+        return kinds
+
+    def _decodes_cleanly(self, lo, hi, seg):
+        """Does [lo, hi) read as code a 1983 game could plausibly contain?
+
+        "It disassembles" is worth nothing on its own -- every byte sequence
+        does. Three further tests turn it into a claim worth acting on, and
+        each was added because the run below survived without it:
+
+        * **No `add byte ptr [bx + si], al`.** That is `00 00`, and it is what
+          a run of zeroes looks like through a disassembler. Four of Hard Hat
+          Mack's five candidates were padding reading as arithmetic.
+        * **No instruction the target CPU does not have.** `pushaw` is 80186,
+          `fisttp` is SSE3. Both turned up in Zaxxon, which is an 8088 game.
+        * **Some control flow.** Real code branches, calls or returns. Two of
+          Zaxxon's candidates were straight-line arithmetic on random operands,
+          which is what data looks like when it happens to decode.
+
+        Together these took the four games from 98 bytes of "worth a look",
+        almost all of it noise, to eight bytes that really were a missed jump.
+        """
+        NOT_8088 = {"pushaw", "popaw", "pushal", "popal", "enter", "leave",
+                    "fisttp", "movsx", "movzx", "bt", "bts", "btr", "shld",
+                    "shrd", "setne", "sete", "cmovne", "cpuid"}
+        FLOW = {"jmp", "call", "ret", "retf", "int", "iret", "loop", "loope",
+                "loopne", "jcxz"}
+        off, flow = lo, False
+        while off < hi:
+            insn = next(self.md.disasm(
+                bytes(self.image[off:min(off + 16, hi)]), seg.addr(off)), None)
+            if insn is None or off + insn.size > hi:
+                return False
+            m = insn.mnemonic
+            if m in IMPLAUSIBLE or m in NOT_8088 or m.startswith("f"):
+                return False
+            if m == "add" and insn.op_str == "byte ptr [bx + si], al":
+                return False
+            if m in FLOW or (m.startswith("j") and len(m) <= 4):
+                flow = True
+            off += insn.size
+        return off == hi and flow
+
+    def detect_case_tables(self):
+        """Read a switch table out of the tail of a gap, when nothing names it.
+
+        `detect_jump_tables` above finds a table because it has already decoded
+        the `jmp word [cs:bp]` that reads it. That is circular in the case this
+        pass exists for: when the jump lives in code that is *itself* unreached,
+        the reader and the table are unreachable together, and neither can be
+        used to find the other.
+
+        Karateka is that case three times over. A C compiler puts a `switch`
+        table immediately behind the function that switches, so the table shares
+        an unclaimed run with the very handlers it names:
+
+            0x1646  ce 14 e0 14 14 15 26 15 ...   ten uint16 handlers, ascending
+            0x51B6  1a 00 5e 51  08 00 3b 51      (case, handler) pairs, where
+                                                  0x1A 0x08 0x0D 0x0A are
+                                                  Ctrl-Z, backspace, CR and LF
+
+        `sweep_gaps` cannot take those runs, and is right not to: linear
+        disassembly walks off the end of the last handler into the table and
+        hits an `insw`. But the veto is all-or-nothing, so twenty bytes of
+        table discard the 758 bytes of handlers in front of them. Karateka lost
+        four such runs, 2,318 bytes, that way.
+
+        The circle breaks from the other end -- recognise a table by what is
+        *in* it rather than by what reads it. Four constraints keep that honest,
+        and the first two on their own are not enough:
+
+        * **Every slot must be a code address that walks to a return.** It is
+          the test `detect_jump_tables` already leans on, and the one that
+          refuses a table of *data* pointers.
+        * **The table must end where the gap ends.** A compiler emits the table
+          behind the function, so the run's far end is the table's far end. It
+          removes the sliding window: without it, any three plausible words
+          anywhere would do, which is how a table scanner starts reading
+          artwork.
+        * **At least three *distinct* targets.** Hard Hat Mack has fourteen
+          `02` bytes in a row; based at 0x0100, `0x0202` is a perfectly valid
+          address that walks to a return, so seven identical slots passed both
+          tests above and a constant array was claimed as a jump table.
+        * **The bytes in front of the table must decode as code, landing exactly
+          on it.** This is the constraint that carries the argument. What this
+          pass is entitled to claim is not "a table anywhere" but *a run that
+          `sweep_gaps` would have accepted except for its tail* -- so the front
+          has to pass the sweep's own landing test, and the tail is then split
+          off rather than guessed at. A run of data with a plausible-looking end
+          has no such prefix, and Hard Hat Mack's three false positives all die
+          here even where distinctness would have let them through.
+
+        Three entries minimum. Two code addresses in a row happen by accident.
+
+        Returns the number of new entry points found.
+        """
+        # Same bound as detect_jump_tables: nothing past the last instruction
+        # already found is accepted as a target.
+        code_hi = max((off + sz for off, (sz, _, _) in self.decoded.items()),
+                      default=0)
+        found = 0
+        for lo, hi in self.decoded_gaps(min_len=12):
+            seg = self.segment_of_file(lo)
+            if seg is None or hi > seg.file_end:
+                continue
+            if any(lo <= b < hi for b in self.blocked):
+                continue
+
+            def target(at, local):
+                """The file offset a slot points at, or None if it is not one.
+
+                `local` demands the destination lie in this same run. A stride-4
+                table checks itself -- the case slot beside each address has to
+                be a small number, and two random words rarely oblige -- but a
+                bare list of addresses has no such second opinion, so it has to
+                buy one with locality. Without it the backwards scan swallows
+                one slot too many: the `eb 2a` of a default arm sits directly in
+                front of Karateka's fourteen-entry table and reads as 0x2AEB,
+                which is a real address elsewhere in the program.
+                """
+                word = self.image[at] | (self.image[at + 1] << 8)
+                if not seg.contains_addr(word):
+                    return None
+                dest = seg.file_off(word)
+                # A handler may sit inside this same run -- a compiler emits the
+                # table behind the function -- or be code the walk already
+                # reached, which a shared `default:` arm often is. Both are
+                # accepted; what is refused is a destination past everything
+                # decoded so far, which is how a table of data pointers looks.
+                if dest >= code_hi or (local and not lo <= dest < hi):
+                    return None
+                # The program's own entry point is not a switch arm. It is
+                # reached by DOS, not by a branch. Zaxxon has a segment based at
+                # zero, which makes a word of `00 00` in a data record look like
+                # a perfectly good address that walks to a return -- and it is
+                # one, it is the entry stub. Excluding the entries is what tells
+                # that record apart from a table.
+                if dest in self.entries:
+                    return None
+                return dest if self.walks_to_return(dest, seg) else None
+
+            # A case label is small. Anything else in that slot means the
+            # pairing is being read at the wrong stride or is not a table.
+            def label(at):
+                return (self.image[at] | (self.image[at + 1] << 8)) < 0x200
+
+            best = None
+            for stride, slots in ((2, (0,)), (4, (0,)), (4, (2,))):
+                targets, at = [], hi
+                while at - stride >= lo:
+                    at -= stride
+                    t = target(at + slots[0], stride == 2)
+                    other = at + (2 if slots[0] == 0 else 0)
+                    if t is None or (stride == 4 and not label(other)):
+                        at += stride
+                        break
+                    targets.append(t)
+                if (len(targets) >= 3 and len(set(targets)) >= 3
+                        and (best is None or at < best[0])):
+                    best = (at, targets)
+            if best is None:
+                continue
+
+            table, targets = best
+            # The claim is "a run sweep_gaps would have taken but for its tail",
+            # so the front has to pass the sweep's own test: linear disassembly
+            # from the start of the run landing exactly on the table, with none
+            # of the instructions that mean the bytes are being read as code by
+            # accident. Without this the pass is a table scanner, and a table
+            # scanner loose in a data segment is how artwork becomes code.
+            if table - lo < 16:
+                continue
+            off, ok = lo, True
+            while off < table:
+                insn = next(self.md.disasm(
+                    bytes(self.image[off:min(off + 16, table)]),
+                    seg.addr(off)), None)
+                if (insn is None or off + insn.size > table
+                        or insn.mnemonic in IMPLAUSIBLE):
+                    ok = False
+                    break
+                off += insn.size
+            if not (ok and off == table):
+                continue
+
+            # The table is data. Say so, or the sweep will take it as code on
+            # its next pass -- a run of code addresses disassembles cleanly and
+            # lands exactly on its far end, which is the whole of that test.
+            self.blocked.add(table)
+            for dest in [lo] + targets:
+                if dest not in self.extra:
+                    self.extra.add(dest)
+                    found += 1
         return found
 
     def disassemble(self):
@@ -1121,7 +1469,17 @@ class Reconstructor:
         self.demoted, self.form = saved
         return good
 
-    def run(self, nasm, max_rounds=40):
+    def run(self, nasm, max_rounds=150):
+        """Round-trip until the rebuild is byte-identical and nothing more moves.
+
+        The budget used to be 40, which was enough for every game this toolkit
+        was built on and not enough for Karateka. Each discovery costs a round
+        -- the sweep and the table scan can only see the *next* gap after the
+        walk has been re-run over the last one -- so the budget has to scale
+        with how much unreached code a program has, not with how big it is.
+        Karateka needs 49 and stopped at 85.0% with 40, which looked like a
+        property of the binary and was a property of the loop.
+        """
         rounds = 0
         while rounds < max_rounds:
             rounds += 1
@@ -1189,12 +1547,35 @@ class Reconstructor:
                 continue
 
             if self.first_mismatch(built) is None:
-                # Byte-identical, so the source is already correct. Spend the
-                # remaining rounds turning leftover data back into code; every
-                # pass is re-verified, so a wrong guess costs a round, not
-                # correctness.
-                if rounds < max_rounds and self.sweep_gaps():
-                    continue
+                # Byte-identical, so the source is already correct. Spend what
+                # is left turning leftover data back into code.
+                #
+                # Each pass can only see the *next* run after the walk has been
+                # re-run over the last one, so discovery is inherently iterative
+                # -- but the iteration belongs here, not around the assembler.
+                # Taking one discovery per verified round cost Karateka 59 NASM
+                # runs over a 700 KB listing, and 52 minutes; batching them runs
+                # the same 59 discoveries against three.
+                #
+                # Nothing is taken on trust: the batch is verified as a batch,
+                # and byte-identity is exactly as strong a check of fifty claims
+                # as of one. What is lost is only the attribution -- a bad claim
+                # is caught but not immediately named -- and the demotion
+                # machinery below already handles that case.
+                #
+                # Case tables first. A table read as code is claimed by the
+                # sweep and then never reconsidered, and the handlers behind it
+                # stay lost -- so the pass that can tell the difference has to
+                # get there first.
+                if rounds < max_rounds:
+                    found = False
+                    while (self.detect_case_tables()
+                           or self.detect_register_callbacks()
+                           or self.sweep_gaps()):
+                        found = True
+                        self.disassemble()
+                    if found:
+                        continue
                 source = self.release_pins(nasm, source)
                 return source, source, rounds, None
 
@@ -1518,6 +1899,25 @@ def main():
         if body_hi < total:
             print(f"  data tail : 0x{body_hi:04X}..0x{total:04X} left as data "
                   f"({total - body_hi:,} bytes)")
+        # What the rest of the region is, so the percentage above cannot be
+        # read as "a fifth of this program is missing" when it is mostly the
+        # program's own tables and artwork sitting among its routines.
+        k = r.classify_residue(body_lo, body_hi)
+        rest = sum(k.values())
+        if rest:
+            named = [(v, n) for n, v in
+                     (("pointer table", k["table"]), ("text", k["text"]),
+                      ("zero fill", k["zero"]), ("other, mostly artwork",
+                                                 k["other"])) if v]
+            print(f"  not code  : {rest:,} bytes ({rest / body:.1%} of the "
+                  f"region, counting a pinned instruction as code), being "
+                  + ", ".join(f"{v:,} {n}" for v, n in
+                              sorted(named, reverse=True)))
+            if k["code"]:
+                print(f"              and {k['code']:,} bytes that disassemble "
+                      f"cleanly -- worth a look")
+            else:
+                print("              nothing in it looks like unreached code")
     print(f"disassembled: {disasm_bytes:,} bytes carry a decoded instruction "
           f"({disasm_bytes / total:.1%}), counting the pinned ones")
 
@@ -1580,6 +1980,17 @@ def main():
 
     if err:
         print(f"\nFAILED: {err}")
+        if err == "did not converge":
+            # The figures above were printed in the same voice as a result, and
+            # they are not one -- the loop stopped because it ran out of turns,
+            # not because it had found everything. Karateka reported 85.0% of
+            # its code region that way for weeks, and the missing 15% was read
+            # as a property of the binary rather than of the budget. It was the
+            # budget: with more rounds the same tool reaches 91.9%.
+            print("      Every figure above is a floor, not a measurement. The "
+                  "loop stopped on its\n      round limit, so more of this file "
+                  "is code than the percentages say.\n      Raise max_rounds "
+                  "before drawing any conclusion from them.")
         if last:
             Path(args.out).write_text(last, encoding="ascii", errors="replace")
             print(f"wrote the last attempt to {args.out} for inspection")
