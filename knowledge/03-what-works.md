@@ -45,9 +45,13 @@ strings, none of it lost.
 ### Reconstruction is not reading
 
 Karateka's reconstruction is finished in every sense the tools can measure, and
-**38 of its 120 routines are named** — 32%. Those 38 are the ones that matter:
-the drawing, the sprite format, the animation compiler, the fight loop, the hit
-test, the health system, the input chain. The other eighty are unread.
+finishing the *reading* was a separate job that took its own sitting: **80 of
+its 120 routines are named**, and the split is the interesting part. Every
+routine that touches a game global is named. The remaining 40 are the C
+library, separated mechanically — no game global, and DOS reached only through
+twelve identified primitives — and left unnamed because their shapes do not
+discriminate. `libscan.py` would name them given the library; guessing would
+only produce names the next reader believes.
 
 That gap is worth stating plainly whenever a percentage is quoted, because
 "91.9% recovered" and "we understand this program" are different claims and the
