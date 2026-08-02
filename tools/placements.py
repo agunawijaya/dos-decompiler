@@ -468,25 +468,42 @@ class Extractor:
             o, t, g = body[n]
             nxt = body[n + 1][1] if n + 1 < len(body) else ""
             mn = t.split(None, 1)[0]
-            if mn in ("je", "jne", "jz", "jnz", "jmp") and g in pos \
-                    and pos[g] > n:
-                z = state.get("zf")
-                take = (True if mn == "jmp" else
-                        None if z is None else
-                        (z if mn in ("je", "jz") else not z))
-                if take is True:
+            if mn in ("je", "jne", "jz", "jnz") and g in pos and pos[g] > n:
+                # A condition on the loop counter cannot be decided here: the
+                # body is walked once and the call site is unrolled afterwards,
+                # so deciding it now settles every iteration by the first one.
+                # Hard Hat Mack's slot tables happen to be all zero, so
+                # skipping the lot was right there and would have been wrong
+                # for any table that alternates. Carry it to the call site as
+                # a guard instead, and walk into the arm that draws.
+                if depends_on(state.get("zsrc"), "bx"):
+                    state["guard"] = (state.get("zsrc"),
+                                      state.get("zcmp", 0),
+                                      mn in ("jne", "jnz"))
+                    state["skip_jmp"] = True
                     n = pos[g]
                     continue
-                if take is False:
-                    n += 1
+                z = state.get("zf")
+                if z is not None:
+                    n = pos[g] if (z if mn in ("je", "jz") else not z) else n + 1
                     continue
+            if mn == "jmp" and g in pos and pos[g] > n:
+                if state.pop("skip_jmp", False):
+                    n += 1              # the else-arm of a guard we deferred
+                else:
+                    n = pos[g]
+                continue
             if t == "dec al" and n and body[n - 1][1] == "inc al":
+                state["zsrc"], state["zcmp"] = state.get("al"), 0
                 v = self.resolve(state, state.get("al"))
                 state["zf"] = None if v is None else v == 0
                 n += 1
                 continue
             m = re.match(r"^cmp (al|bl|cl), (0x[0-9a-f]+|\d+)$", t)
             if m:
+                state["zsrc"] = (state.get("al") if m.group(1) == "al"
+                                 else None)
+                state["zcmp"] = int(m.group(2), 0)
                 v = (self.resolve(state, state.get("al"))
                      if m.group(1) == "al"
                      else state.get("bx" if m.group(1) == "bl" else "cx"))
@@ -503,7 +520,9 @@ class Extractor:
                 # in walk order, which is the order the program writes it in.
                 for a in sel_addrs:
                     if a in state["words"]:
-                        self.last_sel = state["words"][a]
+                        w = self.resolve(state, state["words"][a])
+                        self.last_sel = (None if w is None
+                                         else (w & 0xFF) + (w >> 8))
                     elif a in state["bytes"] or a + 1 in state["bytes"]:
                         lo = self.resolve(state, state["bytes"].get(a))
                         hi = self.resolve(state, state["bytes"].get(a + 1))
@@ -512,8 +531,13 @@ class Extractor:
                         # its own -- would inherit the last shape anyone
                         # managed to resolve rather than the one actually left
                         # there.
+                        # Combined, the way a written selector resolves. Left
+                        # as a raw word it was a different quantity from the
+                        # one the same function returns on the other branch,
+                        # which no game noticed because `entry()` is
+                        # idempotent on both.
                         self.last_sel = (None if lo is None or hi is None
-                                         else (hi << 8) | lo)
+                                         else (lo + hi) & 0xFF)
                 continue
             if t.startswith("call") and g is not None:
                 if g in self.fillers:
@@ -968,6 +992,14 @@ class Extractor:
                     over[v] = i
                     for w, (start, k) in steps.items():
                         over[w] = (start + k * (first - i)) & 0xFF
+                guard = s.get("guard")
+                if guard is not None:
+                    # The comparand matters: draw_toolboxes draws a slot whose
+                    # state is *not 2*, and reading that as "not zero" skipped
+                    # all four.
+                    v = self.resolve(s, guard[0], regs=over)
+                    if v is None or (v != guard[1]) != guard[2]:
+                        continue      # this slot is not drawn on this pass
                 sel = self.resolve(s, raws[2], regs=over)
                 if sel is None:
                     why = why or f"no sprite selector in [{tr.sel:#06x}]"

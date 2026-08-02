@@ -398,3 +398,41 @@ attributing the difference rather than on measuring the total more precisely.
 A total tells you how far you have to go. An attribution tells you where to
 stand. And the cost is usually a stack read: the caller is already on the
 stack at the moment you are already stopped.
+
+## The referee that ships
+
+Everything above was found by running Hard Hat Mack. That referee cannot ship:
+it needs a copyrighted game, so on any other machine `placements.py` -- the
+most valuable tool here and the one that took ten fixes in a session -- had
+nothing checking it at all.
+
+`tests/placements/` is the same referee on a program the repository owns. One
+`.COM` fixture: a drawer, and one builder per shape that was once read wrongly
+-- counts down, counts up, two variables, a per-slot guard, a routine that
+writes no selector, a zero immediate. It is checked twice: against a table
+written out by hand from the fixture's own data, and against the fixture run
+under `comrun.py` with the drawer hooked. Two independent references, and if
+they disagree the test says which one to doubt.
+
+**It earned itself on the first run, and not in the way expected.** The
+conditional-evaluation fix -- decide a branch, skip the arm that does not run
+-- was written against Hard Hat Mack and measured against Hard Hat Mack, where
+it removed six invented placements and broke nothing. It was wrong. Deciding a
+condition during the linear walk settles *every* iteration of the loop by the
+first one, and the reason the game did not notice is that its slot tables are
+all zero: skipping every slot was the right answer by accident. The fixture's
+table alternates 1, 0, 1, 0, and the bug was visible immediately.
+
+Then the fix for the fix was wrong too, in the same shape: the guard was
+carried to the call site and evaluated per iteration, but only ever against
+zero -- and one routine draws a slot whose state is *not 2*. Hard Hat Mack
+caught that one, because four toolboxes vanished. The two tests fail on
+different things.
+
+**What transfers.** A real program is a biased sample of its own patterns. It
+exercises the shapes its author used, with the data that author chose, and a
+tool tuned against one is tuned against that bias -- including the places where
+two wrongs happen to cancel. A fixture is where you write the case the game
+does not contain. Neither is sufficient: the game is the only proof the tool
+works on real code, and the fixture is the only proof it works for the right
+reason.
