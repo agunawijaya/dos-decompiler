@@ -148,6 +148,45 @@ run-length decoder have no prologue at all, use every register and keep their
 state in globals. C for the game, assembly for the inner loops — which is what
 the density was really telling us before it was misread.
 
+### Confirmed against the library, and what a point release costs
+
+Lattice C 2.12 for DOS (1984) was fetched and scanned against Karateka with
+`libscan.py`. **It matched 3 modules of 625 — 0.2% of the image** — and that
+figure understates the result to the point of being misleading.
+
+Those three modules carry seven symbols, and all seven land on addresses that
+had already been named from behaviour alone, months of reasoning earlier:
+
+| | named from behaviour | the library's own name |
+|---|---|---|
+| `0x5DBB` | `getch`, from `bdos(AH=0x08)` | `_CGET` |
+| `0x5DCF` | `getche`, `AH=0x01` | `_CGETE` |
+| `0x5DE3` | `putch`, `AH=0x02` | `_CPUT` |
+| `0x5DF7` | `aux_getc`, `AH=0x03` | `_AGET` |
+| `0x5E0B` | `aux_putc`, `AH=0x04` | `_APUT` |
+| `0x5E1F` | `prn_putc`, `AH=0x05` | `_LPUT` |
+| `0x6B84` | `bdos`, AH from `[bp+4]` | `BDOS` |
+
+**Seven for seven.** Reading what a routine does, and naming it for that,
+produced exactly the names its author used.
+
+The 0.2% is worth understanding rather than lamenting. Karateka names Lattice C
+**2.1**; the obtainable release is **2.12**. The library was rebuilt between
+those point releases, so most modules differ by a byte or two, and an
+exact-bytes scan refuses them — *correctly*. The three that matched are the
+small ones nobody had reason to touch.
+
+Two things follow for the next program:
+
+- **A near-miss version is still worth scanning.** 0.2% coverage bought
+  seven confirmations and settled the memory model: `LCS.LIB` matched nothing,
+  `LCD.LIB` matched all three, so Karateka is the **D** model, which agrees
+  with an entry stub that sets DS once while addressing code from zero.
+- **Do not read a low match rate as a failed identification.** It is a
+  statement about how far apart two builds of the library are, not about
+  whether the compiler was identified. The compiler was already certain — the
+  binary says `Lattice C 2.1` in its own data segment.
+
 ## Inline assembly and hand-written modules
 
 Over a quarter of Sopwith is hand-written MASM. Assembly modules do not obey C
