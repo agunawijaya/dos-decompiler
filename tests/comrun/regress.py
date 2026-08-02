@@ -192,39 +192,44 @@ def _():
     return "0 delivered, as it must be"
 
 
-@case("a handler in another segment runs and returns")
+@case("a handler below the interrupted segment is entered correctly")
 def _():
-    # This exercises the far-handler path. It does NOT reproduce the failure
-    # that path had, and saying so is the point of the comment.
-    #
-    # Restarting at a handler's linear address while CS still named the
-    # interrupted segment ended a run of The Oregon Trail after a single
-    # delivery, at 26,900,030 instructions, every time. Writing CS with the
-    # handler's segment fixed it: 139 deliveries and a run that went the
-    # distance. The attribution is a controlled experiment on the real
-    # program -- remove the write and the crash comes back, restore it and
-    # it does not.
-    #
-    # This fixture passes either way. Its handler is straight-line code whose
-    # only memory access is DS-relative, so nothing in it depends on CS, and
-    # the iret restores CS regardless. What actually breaks in the real
-    # program between entry and iret is not established, and a check that
-    # cannot fail must not be described as guarding against it.
-    m = comrun.Machine(SPIN)
-    far = comrun.SEG + 0x100                      # a segment of its own
-    m.uc.mem_write((far << 4) + 0x30,
-                   bytes((0xFF, 0x06, 0x00, 0x02, 0xCF)))   # inc / iret
-    m.uc.mem_write(TIMER * 4, struct.pack("<HH", 0x30, far))
-    m.isr_vector, m.isr_every = TIMER, 5_000
-    m.run(budget=200_000)
-    # The handler's `inc word [0200]` is DS-relative, and DS is still the
-    # program's, so a working delivery moves the counter and comes back.
+    """The geometry that actually breaks, and it took a second attempt to find.
+
+    An earlier fixture put the handler in a segment *above* the code it
+    interrupted and passed whether or not comrun moved CS with the jump --
+    a check that cannot fail, wearing the name of a guard. This one puts the
+    interrupted code at 2000:0000 and the handler at 1000:0130, which is the
+    real program's arrangement: the handler's linear address is BELOW the
+    interrupted CS base, so leaving CS alone underflows Unicorn's EIP and
+    the handler never runs. The counter stays at zero and execution wanders
+    out of the image -- which is what The Oregon Trail did, at 26,900,030
+    instructions, every time.
+    """
+    HIGH = 0x2000
+    m = comrun.Machine(bytes((0xEB, 0xFE)))
+    m.uc.mem_write(HIGH << 4, bytes((
+        0x83, 0x3E, 0x00, 0x02, 0x00,   # cmp word [0200], 0
+        0x74, 0xF9,                     # je  back  -- wait for the handler
+        0xEB, 0xFE)))                   # jmp $     -- escaped
+    m.uc.mem_write(comrun.BASE + 0x130, bytes((
+        0xFF, 0x06, 0x00, 0x02,         # inc word [0200]
+        0xCF)))                         # iret
+    m.uc.mem_write(TIMER * 4, struct.pack("<HH", 0x130, comrun.SEG))
+    for r in (comrun.UC_X86_REG_DS, comrun.UC_X86_REG_SS):
+        m.uc.reg_write(r, comrun.SEG)
+    m.uc.reg_write(comrun.UC_X86_REG_CS, HIGH)
+    m.uc.reg_write(comrun.UC_X86_REG_SP, 0xFFFE)
+    m.isr_vector, m.isr_every = TIMER, 3_000
+    m.run(start=(HIGH << 4) - comrun.BASE - comrun.LOAD, budget=60_000)
+
     counter = int.from_bytes(m.uc.mem_read(comrun.BASE + 0x200, 2), "little")
     if counter == 0:
-        raise AssertionError("the far handler never ran")
-    if m.uc.reg_read(comrun.UC_X86_REG_IP) != 0x107:
-        raise AssertionError("did not resume at jmp $ -- CS and IP disagree")
-    return f"counter {counter}, resumed correctly"
+        raise AssertionError(
+            "the handler never incremented -- CS did not move with the jump")
+    if m.uc.reg_read(comrun.UC_X86_REG_IP) != 0x0007:
+        raise AssertionError("the program did not escape its wait loop")
+    return f"counter {counter}, escaped to jmp $"
 
 
 @case("no timer ISR by default")
