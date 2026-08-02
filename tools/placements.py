@@ -270,8 +270,16 @@ class Extractor:
 
         out = []
         state = dict(inherited) if inherited else {}
-        state.setdefault("bytes", {})      # address -> value or a deferred read
-        state.setdefault("words", {})      # address -> immediate
+        # `dict()` is shallow, so the callee shared the caller's `bytes` and
+        # `words` dictionaries and every write and pop it made leaked back out.
+        # Two calls to the same routine from one parent then saw each other's
+        # state: Hard Hat Mack draws a crate at column 9 and again at 0x19, and
+        # the second call read the first one's leftovers. Inheriting *in* is
+        # deliberate -- a nested loop sets the row outside and the column
+        # inside -- but nothing should come back.
+        state["bytes"] = dict(state.get("bytes") or {})
+        state["words"] = dict(state.get("words") or {})
+        state.setdefault("count", None)    # loop trip count from `mov bl, imm`
         state.setdefault("count", None)    # loop trip count from `mov bl, imm`
         state.setdefault("bx", None)       # the loop counter / index register
         state.setdefault("cx", None)       # a second index, not the loop's
