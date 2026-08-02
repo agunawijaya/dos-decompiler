@@ -106,3 +106,32 @@ declares as functions.
 **Ghidra addresses are biased.** Its MZ loader places the image at segment
 `0x1000`, while a linker map numbers segments from zero. Add the bias before
 comparing, or nothing will line up and the cause is not obvious.
+
+**A table's address may never appear in the program.** Two games here have hit
+this, in two different languages, six years apart. If a subscript range does not
+start at zero — `array[3..8] of string[10]` in Pascal, or the same trick written
+by hand in assembly — the compiler folds the lower bound into the base *once*,
+at compile time, so indexing costs a multiply and an add instead of a multiply,
+a subtract and an add. What the code then contains is `base − low × stride`,
+which points at nothing:
+
+    0013C61  mov al, [bp-0x103]        ; The Oregon Trail: an illness code, 3..8
+    0013C67  mov dx, 0x000B / mul dx
+    0013C6E  add di, 0x0CB5            ; the table is at 0x0CD6 -- 33 bytes later
+
+`0x0CB5` lands in the middle of the previous string. Searching the image for
+`0x0CD6` finds nothing at all, and the natural conclusion — that the table is
+unused — is wrong. Zaxxon does the same with two tables, four bytes early, and
+its notes say *"it looks like a bug and is not."*
+
+**So enumerate the mechanism, not the address.** Scan for the *stride* instead:
+every `mov dx, <n> / mul dx` followed by an `add di, imm16` is a table access,
+and the list is short enough to read — 42 of them in a 200 KB program, with the
+answer sitting in plain sight. The same move solved a second problem in the same
+binary, where a whole missing segment made a subsystem look as though it
+addressed its data by magic.
+
+The general rule, and it is worth more than either case: **when a search with a
+good positive control still comes back empty, change the question rather than
+the thresholds.** A control proves the search works; it cannot tell you the
+search is asking for the right thing.
