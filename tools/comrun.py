@@ -161,6 +161,11 @@ class Machine:
         self.steps = 0
         self.stopped = None
         self.recent = [0] * 512
+        # Every image offset the program actually executed. Off by
+        # default: a set with a million entries costs real time, and
+        # it is only wanted when something is being checked against
+        # a static reading.
+        self.exec_map = None
         self.pending_key = None     # what port 0x60 should hand over next
         self.files = Path(files) if files else None
         self.open_files = {}        # handle -> [bytes, position, name]
@@ -304,6 +309,8 @@ class Machine:
         # what you need is where it came from, and by then the registers no
         # longer say. Sixteen entries is enough to see the far call that did it.
         self.recent[self.steps & 511] = addr
+        if self.exec_map is not None:
+            self.exec_map.add(addr - BASE - LOAD)
         if self.steps % self.TICK_EVERY == 0:
             self.ticks += 1
             uc.mem_write(0x46C, struct.pack("<I", self.ticks))
@@ -822,6 +829,9 @@ def main():
     ap.add_argument("--png")
     ap.add_argument("--palette", default="1", choices=sorted(PALETTES))
     ap.add_argument("--json")
+    ap.add_argument("--exec-map", metavar="FILE",
+                    help="write every image offset the program executed, "
+                         "for checking a disassembly against a run")
     ap.add_argument("--dump", help="write a memory range as OFF:LEN")
     args = ap.parse_args()
 
@@ -832,6 +842,8 @@ def main():
     image = Path(args.binary).read_bytes()
     m = Machine(image, keys=keys,
                 files=args.files or Path(args.binary).parent)
+    if args.exec_map:
+        m.exec_map = set()
 
     watch = [int(x, 16) for x in args.watch.split(",")] if args.watch else []
     varlist = [int(x, 16) for x in args.vars.split(",")] if args.vars else []
@@ -916,6 +928,10 @@ def main():
             {"stopped": why, "steps": m.steps, "blits": m.blits}, indent=2),
             encoding="utf-8")
         print(f"wrote {args.json}")
+    if args.exec_map:
+        hit = sorted(a for a in m.exec_map if a >= 0)
+        Path(args.exec_map).write_text(chr(10).join(f"{a:x}" for a in hit))
+        print(f"executed {len(hit):,} distinct addresses -> {args.exec_map}")
     return 0
 
 
