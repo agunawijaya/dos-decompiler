@@ -178,6 +178,13 @@ class Machine:
         # it is only wanted when something is being checked against
         # a static reading.
         self.exec_map = None
+        # ADDR -> [AX, ...]: keys handed over only when the program reaches a
+        # chosen instruction. `--keys` alone is a blind queue, and a game that
+        # polls the keyboard eats it: The Oregon Trail issues 81,665 INT 16h
+        # reads while consuming 73 queued keys, so a sequence meant for its
+        # prompts is swallowed by an animation loop long before the prompt
+        # appears. Triggering on an address puts the key where it is wanted.
+        self.at_keys = {}
         self.pending_key = None     # what port 0x60 should hand over next
         self.files = Path(files) if files else None
         self.open_files = {}        # handle -> [bytes, position, name]
@@ -327,6 +334,9 @@ class Machine:
             self.ticks += 1
             uc.mem_write(0x46C, struct.pack("<I", self.ticks))
         off = addr - self.img_bias
+        pending = self.at_keys.get(off)
+        if pending:
+            self.keys.append(pending.pop(0))
         if off in self.watch:
             self.watch[off](off)
         # Stopping on the *nth* arrival, not the first, is what makes a game
@@ -831,6 +841,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary")
+    ap.add_argument("--at", metavar="ADDR=KEY[,...]", default="",
+                    help="hand a key over when the program reaches an address, "
+                         "rather than queueing it blind. Repeat an address to "
+                         "deliver several, in order.")
     ap.add_argument("--poke", metavar="OFF=VAL[,...]", default="",
                     help="write a word at an image offset before --call. A "
                          "routine usually refuses to run without the state a "
@@ -927,6 +941,13 @@ def main():
             print("  the program printed:")
             for line in text.split("\n"):
                 print(f"      {line}")
+
+    for item in (x for x in args.at.split(",") if x.strip()):
+        a, _, k = item.partition("=")
+        m.at_keys.setdefault(int(a, 16), []).append(int(k, 0))
+    if m.at_keys:
+        print("keys on arrival: " + ", ".join(
+            f"{a:#x} -> {len(v)}" for a, v in sorted(m.at_keys.items())))
 
     for item in (x for x in args.poke.split(",") if x.strip()):
         off, _, val = item.partition("=")
