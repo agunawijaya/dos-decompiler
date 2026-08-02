@@ -257,6 +257,15 @@ class Extractor:
         self.image = rec.image
         self.unparsed = []
         self.last_sel = None    # the selector a routine that writes none inherits
+        self._last = {"bytes": {}, "words": {}}   # a callee's state on return
+        # The drawer parameter block: scratch, written fresh before every call,
+        # and the one thing a callee must not hand back to its caller.
+        self.params = set()
+        for v in self.drawers.values():
+            for tr in (v if isinstance(v, list) else [v]):
+                self.params |= {tr.col, tr.row, tr.sel, tr.sel + 1}
+        for spec in (self.fillers or {}).values():
+            self.params |= set(spec)
         self.out_guard = []
         self.sites = 0          # placement calls reached
         self.explained = 0      # ...of which produced at least one placement
@@ -275,6 +284,71 @@ class Extractor:
 
     def routine(self, start, limit=300):
         return routine(self.r, start, limit)
+
+    @staticmethod
+    def var_loop(body):
+        """A loop whose counter and whose cursor are both *variables*.
+
+        The loops this tool grew up on keep the counter in BL. draw_conveyor
+        keeps two bytes in memory instead -- one counting down, one walking
+        across -- and never puts either in a register except to index a table:
+
+            mov al, 0x0e            ; the column, stepping by two
+            mov byte [W], al
+            mov al, 3               ; the counter, 3 down to 0
+            mov byte [V], al
+          again:
+            mov bl, byte [V]
+            mov al, byte [W]
+            mov byte [place_col], al
+            ... place a pair indexed by BL ...
+            inc byte [W]
+            inc byte [W]
+            dec byte [V]
+            js  out
+            jmp again
+
+        With no `mov bl, imm` there is no loop as far as the tracker is
+        concerned, so it evaluated one iteration and drew one of the four
+        conveyor segments. Nothing failed: the segment it drew was correct.
+
+        Returns (V, first, {W: (start, step)}), so an iteration at counter `i`
+        reads W as `start + step * (first - i)`.
+        """
+        text = [t for _, t, _ in body]
+        v = None
+        for n, t in enumerate(text):
+            m = re.match(r"^dec byte \[(0x[0-9a-f]+)\]$", t)
+            if m and any(x.startswith("js ") for x in text[n + 1:n + 3]):
+                v = m.group(1)
+                break
+        if v is None or f"mov bl, byte [{v}]" not in text:
+            return None
+
+        def initial(var):
+            """The immediate a variable is loaded with before the loop opens."""
+            for n, t in enumerate(text):
+                if re.match(rf"^mov byte \[{var}\], (al|bl)$", t) and n:
+                    m = re.match(r"^mov (?:al|bl), (0x[0-9a-f]+|\d+)$",
+                                 text[n - 1])
+                    if m:
+                        return int(m.group(1), 0)
+            return None
+
+        first = initial(v)
+        if first is None or first < 1:
+            return None
+        steps = {}
+        for w in {m.group(1) for m in
+                  (re.match(r"^inc byte \[(0x[0-9a-f]+)\]$", t) for t in text)
+                  if m}:
+            if w == v:
+                continue
+            start = initial(w)
+            if start is not None:
+                steps[int(w, 16)] = (start,
+                                     text.count(f"inc byte [{w}]"))
+        return int(v, 16), first, steps
 
     @staticmethod
     def up_loop(body):
@@ -363,6 +437,8 @@ class Extractor:
         up = self.up_loop(body)
         if up:
             state["up"] = up
+        vl = self.var_loop(body)
+        state["vloop"] = vl if vl else None
         sel_addrs = {tr.sel for v in self.drawers.values()
                      for tr in (v if isinstance(v, list) else [v])}
         for n, (o, t, g) in enumerate(body):
@@ -407,6 +483,24 @@ class Extractor:
                         state["bytes"].pop(tr.row, None)
                 else:
                     out += self.walk(g, depth + 1, seen, state)
+                    # What a callee writes to *game state* is still written
+                    # when it returns. Isolating everything was too blunt: it
+                    # was added because two calls to draw_crate read each
+                    # other's columns, and a column is scratch -- the drawer
+                    # parameter block, re-set before every call. hoist_y is
+                    # not. `reset_screen_state` sets it to 180 and
+                    # draw_hoist_car reads it three calls later, and with the
+                    # write dropped the car was drawn at row 0.
+                    #
+                    # So the rule is by address, not by direction: the drawer
+                    # parameters stay isolated, everything else comes back.
+                    for k, v in self._last["bytes"].items():
+                        if k not in self.params:
+                            state["bytes"][k] = v
+                    for k, v in self._last["words"].items():
+                        if k not in self.params:
+                            state["words"][k] = v
+        self._last = state
         return out
 
     def step(self, state, t, nxt=""):
@@ -462,6 +556,23 @@ class Extractor:
         m = re.match(r"^mov al, byte \[(0x[0-9a-f]+)\]$", t)
         if m:
             state["al"] = ("var", int(m.group(1), 16))
+            return True
+        m = re.match(r"^mov bl, byte \[(0x[0-9a-f]+)\]$", t)
+        if m:
+            # The index comes from a variable, not an immediate. Leaving BL
+            # alone here was the worst of the three options: draw_pits took
+            # whatever index the *caller* had left in it and read its column
+            # table past the end, producing a sprite at column 238. Resolve it
+            # if the value is known, and clear it if not -- an index nobody
+            # has decided must not be inherited from a stranger.
+            # ...and only from what something has actually written. For a
+            # value a table is indexed by, the file's initial byte is almost
+            # never the run-time one, and guessing it reads the table
+            # somewhere it was never read: draw_pits produced a sprite at
+            # column 238 that way.
+            a = int(m.group(1), 16)
+            state["bx"] = (self.resolve(state, state["bytes"][a])
+                           if a in state["bytes"] else None)
             return True
         m = re.match(r"^add al, byte \[(bx|si) \+ (0x[0-9a-f]+)\]$", t)
         if m:
@@ -614,6 +725,11 @@ class Extractor:
             return None
         kind, addr = v[0], v[1]
         if kind == "var":
+            # A variable the loop steps: the cursor in a two-variable loop is
+            # read the same way a constant is, and only the override says
+            # otherwise.
+            if regs and addr in regs:
+                return regs[addr]
             # A builder configures the routines it is about to call by writing
             # constants into variables. Reading a variable's *initial* value
             # from the file gives the wrong answer for every screen but the one
@@ -702,10 +818,36 @@ class Extractor:
         inner = span("bx", "count")     # the column counter
         outer = span("si", "ccount")    # the floor counter, one level out
 
+        # A loop kept entirely in memory: the counter is not in BL until the
+        # instruction that indexes a table with it, so nothing above sees a
+        # loop at all. Take the trip count from the variable instead.
+        vloop = s.get("vloop")
+        if vloop:
+            # ...and the placement need not touch BL at all to be in that loop.
+            # A `place_pair` erases the previous cell before drawing the new
+            # one, and the erase reads only the stepped column and two
+            # constants -- no table, no index register. Deciding on `"bx" in
+            # uses` alone unrolled the draw four times and the erase once, so
+            # three of the four conveyor segments were never rubbed out.
+            def steps_var(v):
+                if not isinstance(v, tuple):
+                    return False
+                if v[0] == "var" and v[1] in vloop[2]:
+                    return True
+                return any(steps_var(p) for p in v[1:])
+
+            if "bx" in uses or any(steps_var(v) for v in raws):
+                inner = range(vloop[1], -1, -1)
+
         out, why = [], None
         for j in outer:
             for i in inner:
                 over = {"bx": i, "si": j}
+                if vloop:
+                    v, first, steps = vloop
+                    over[v] = i
+                    for w, (start, k) in steps.items():
+                        over[w] = (start + k * (first - i)) & 0xFF
                 sel = self.resolve(s, raws[2], regs=over)
                 if sel is None:
                     why = why or f"no sprite selector in [{tr.sel:#06x}]"

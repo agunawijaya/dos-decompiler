@@ -332,7 +332,7 @@ missed (13), by the routine that made them:
 ```
 
 Five names. Three sessions of "twenty-one placements" became an afternoon, and
-three bugs in the static extractor came out of it:
+six bugs in the static extractor came out of it:
 
 - **A counted loop that runs up.** `mov bl, 1` / `mov byte [V], bl` … `inc byte
   [V]` / `cmp bl, 5` was read as the count-down shape every other loop in the
@@ -350,9 +350,32 @@ three bugs in the static extractor came out of it:
   order, separately from the isolated state, because walk order is the order
   the program writes it in.
 
-None of the three would have been found from the coordinates. All three are
-obvious in the twenty instructions of the routine that the caller attribution
-names.
+- **A loop kept entirely in memory.** `draw_conveyor` counts down in one
+  variable and steps across in another, and never puts either in a register
+  except to index a table. With no `mov bl, imm` there is no loop to see, so
+  one of its four segments was drawn and three were not.
+- **…and a placement that is in that loop without touching the index.** A
+  `place_pair` erases the previous cell before drawing the new one, and the
+  erase reads only the stepped column and two constants. Deciding whether to
+  unroll on "does this use BX" unrolled the draw four times and the erase once.
+- **Callee state that is game state.** Writes inside a callee were isolated
+  from the caller wholesale, to stop two calls to the same routine reading each
+  other's leftovers. But the thing being protected against is *scratch* — the
+  drawer's parameter block, written fresh before every call — and `hoist_y` is
+  not scratch: one routine sets it and another reads it three calls later. The
+  rule has to be by address, not by direction.
+
+None of the six would have been found from the coordinates. All six are obvious
+in the twenty instructions of the routine that the caller attribution names.
+
+**Where it ended.** 172 of 193 placements to 186, recall 89% to 96%. The seven
+that remain are one fact: a routine picks its shape with `random() & 3` from a
+table of four *different* entries, so there is no shape in the file to read,
+and a second routine that writes no selector of its own inherits that pick.
+That is the boundary of static extraction — and the point is that it is now
+*established per placement* rather than asserted about the method. It had been
+asserted through two revisions of an architecture document while six ordinary
+bugs sat behind it.
 
 **The rule.** When a comparison produces a difference, spend the next hook on
 attributing the difference rather than on measuring the total more precisely.
