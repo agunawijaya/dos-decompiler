@@ -80,6 +80,24 @@ tool started with matched almost nothing in these three games. Hard Hat Mack's
 being substituted. BP- and SP-relative displacements are excluded, because
 `[bp + 0x08]` is an argument and not whatever global happens to live at 8.
 
+## Data that decodes is still data
+
+Six bracketed constants in Hard Hat Mack survived every other check and are
+not addresses. `and bx, word [0x001E]` is a run of table bytes that happens to
+encode as an instruction, inside a run comrec classified as code because it
+decoded cleanly all the way through. NASM re-emits the same bytes, so
+byte-identity says nothing about it either way.
+
+This is the mirror of the question `knowledge/11` answers. There: are unreached
+bytes code? Here: are reached bytes that decode actually data? Both come down to
+what refers to them, and nothing referred to these. The reason it matters is
+that a naming pass will happily invent a variable for each one, and six
+plausible variables in a symbol file are six things the next reader will
+believe.
+
+The tell is that the "address" is referenced exactly once, from inside a run
+with no incoming branch, and nothing writes it.
+
 ## Corollary: check what coordinate a key is in
 
 The same `scanline_table` entry was recorded as `0x042d`, its **file offset**,
@@ -90,3 +108,15 @@ a symbol that never substitutes cannot fail loudly.
 Add the check to the build: every routine key should match a label in the
 listing, and every bracketed address in the listing should either have a name
 or be on a list of ones you decided not to name.
+
+## One address, two prefixes, one variable
+
+Hard Hat Mack's keyboard handler reads `[cs:0x0781]` while everything else
+reads `[0x0781]`. The game sets DS = CS, so those are one variable, and the
+prefix is there only because an interrupt cannot trust DS. Zaxxon's `cs:` and
+bare addresses, by contrast, are genuinely different memory.
+
+So the duplicate-name check has to be on the *number*, not the prefix: two keys
+may share a name when they resolve to the same address, and must not when they
+do not. Getting that backwards either forces two names onto one variable or
+lets one name cover two.

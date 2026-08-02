@@ -80,11 +80,19 @@ def load_symbols(path):
     for kind, table in (("routine", routines), ("global", globals_)):
         seen = {}
         for addr, (name, _) in sorted(table.items(), key=lambda kv: repr(kv[0])):
-            if name in seen:
+            # Two keys may share a name when they are the same address reached
+            # through different prefixes. Hard Hat Mack sets DS = CS, so the
+            # interrupt handler writes `[cs:0x0781]` and everything else writes
+            # `[0x0781]`, and those are one variable. Zaxxon's `cs:` and bare
+            # addresses are not, which is why the check is on the number and
+            # not on the prefix.
+            here = addr[1] if isinstance(addr, tuple) else addr
+            there = seen.get(name)
+            if there is not None and there != here:
                 raise SystemExit(
-                    f"two {kind}s share the name {name!r}: "
-                    f"{seen[name]} and {addr}")
-            seen[name] = addr
+                    f"two {kind}s share the name {name!r} at different "
+                    f"addresses: 0x{there:05X} and 0x{here:05X}")
+            seen[name] = here
     return routines, globals_
 
 
