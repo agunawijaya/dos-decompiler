@@ -450,8 +450,51 @@ class Extractor:
         state["vloop"] = vl if vl else None
         sel_addrs = {tr.sel for v in self.drawers.values()
                      for tr in (v if isinstance(v, list) else [v])}
-        for n, (o, t, g) in enumerate(body):
+        # Following a branch it can decide. Without this the walk runs both
+        # arms of every conditional and draws from both: draw_pits and
+        # draw_rivet_row test a per-slot state byte, the program skips the
+        # slots whose byte is zero, and the reading put six sprites on the
+        # screen that the game never draws. The flag comes from the 6502
+        # translation's own idiom -- `mov al, X / inc al / dec al` sets Z from
+        # AL, which is what LDA did -- and from `cmp reg, imm`.
+        #
+        # Only forward jumps are followed. A back edge is a loop, and loops
+        # are handled by unrolling the call site rather than by walking round,
+        # so following one would count every placement twice.
+        pos = {o: i for i, (o, _, _) in enumerate(body)}
+        n, budget = 0, 4 * len(body) + 16
+        while n < len(body) and budget > 0:
+            budget -= 1
+            o, t, g = body[n]
             nxt = body[n + 1][1] if n + 1 < len(body) else ""
+            mn = t.split(None, 1)[0]
+            if mn in ("je", "jne", "jz", "jnz", "jmp") and g in pos \
+                    and pos[g] > n:
+                z = state.get("zf")
+                take = (True if mn == "jmp" else
+                        None if z is None else
+                        (z if mn in ("je", "jz") else not z))
+                if take is True:
+                    n = pos[g]
+                    continue
+                if take is False:
+                    n += 1
+                    continue
+            if t == "dec al" and n and body[n - 1][1] == "inc al":
+                v = self.resolve(state, state.get("al"))
+                state["zf"] = None if v is None else v == 0
+                n += 1
+                continue
+            m = re.match(r"^cmp (al|bl|cl), (0x[0-9a-f]+|\d+)$", t)
+            if m:
+                v = (self.resolve(state, state.get("al"))
+                     if m.group(1) == "al"
+                     else state.get("bx" if m.group(1) == "bl" else "cx"))
+                state["zf"] = (None if not isinstance(v, int)
+                               else v == int(m.group(2), 0))
+                n += 1
+                continue
+            n += 1
             if self.step(state, t, nxt):
                 # The selector is a real global and it outlives the routine
                 # that set it. Callee state is deliberately not merged back --
@@ -461,6 +504,16 @@ class Extractor:
                 for a in sel_addrs:
                     if a in state["words"]:
                         self.last_sel = state["words"][a]
+                    elif a in state["bytes"] or a + 1 in state["bytes"]:
+                        lo = self.resolve(state, state["bytes"].get(a))
+                        hi = self.resolve(state, state["bytes"].get(a + 1))
+                        # An undecided write makes the *carried* selector
+                        # undecided too, or draw_rivets -- which writes none of
+                        # its own -- would inherit the last shape anyone
+                        # managed to resolve rather than the one actually left
+                        # there.
+                        self.last_sel = (None if lo is None or hi is None
+                                         else (hi << 8) | lo)
                 continue
             if t.startswith("call") and g is not None:
                 if g in self.fillers:
@@ -492,6 +545,14 @@ class Extractor:
                         state["bytes"].pop(tr.row, None)
                 else:
                     out += self.walk(g, depth + 1, seen, state)
+                    # What the callee left in AL is not modelled, so it is not
+                    # known. spawn_lunchbox calls `random` and masks the result
+                    # to choose one of four shapes; keeping the AL from before
+                    # the call turned "cannot be decided" into a definite wrong
+                    # shape, and a wrong shape is emitted where nothing should
+                    # be.
+                    state["al"] = None
+                    state["zf"] = None
                     # What a callee writes to *game state* is still written
                     # when it returns. Isolating everything was too blunt: it
                     # was added because two calls to draw_crate read each
@@ -967,12 +1028,22 @@ class Extractor:
         every girder in a run at the same shape, and produced a placement every
         time, so the coverage metric stayed at 100%.
         """
-        hi = None
+        hi, written = None, True
         if tr.sel in s["words"]:
-            hi = s["words"][tr.sel] >> 8
+            w = s["words"][tr.sel]
+            hi = None if w is None else w >> 8
         elif tr.sel + 1 in s["bytes"]:
             hi = s["bytes"][tr.sel + 1]
-        if hi is None:
+        else:
+            written = False
+        if written and hi is None:
+            # Written, and with something nobody could decide. That is not the
+            # same as not written at all, and treating the two alike was how a
+            # random shape came out as a definite wrong one: spawn_lunchbox
+            # stores `lunchbox_shapes[random() & 3]` here, so the address holds
+            # a value -- it is just not one the file contains.
+            return None
+        if not written:
             # The selector is a real global and it persists. Two of Hard Hat
             # Mack's routines never write it -- draw_rivets and draw_beams set
             # the blit mode and nothing else, and draw whatever shape the last
