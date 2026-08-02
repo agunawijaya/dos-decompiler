@@ -65,19 +65,30 @@ def load_symbols(path):
     routines = {int(k, 16): tuple(v) for k, v in raw["routines"].items()}
     globals_ = {_key(k): tuple(v) for k, v in raw["globals"].items()}
 
+    # Constants the symbol file has already ruled on: `_displacements` for a
+    # field offset that only ever appears with a base register, and
+    # `_not_addresses` for table bytes that happen to decode as an operand.
+    # Both are decisions, not gaps, and the audit should not keep asking.
+    decided = {int(k, 16) for k in raw.get("_displacements", {})
+               if k.startswith("0x")}
+    for line in raw.get("_not_addresses", []):
+        decided |= {int(x, 16) for x in re.findall(r"0x[0-9A-Fa-f]{4}", line)}
+    globals_["_decided"] = decided
+
     # A name used for both a routine and a global is silently fatal: the global
     # becomes a `%define`, the routine's label is rewritten to the same word,
     # and NASM is handed `0x4230:` where a label should be. The error it gives
     # points at the label and says nothing about the collision, so catch it
     # here where the cause is obvious.
-    clash = ({n for n, _ in routines.values()} & {n for n, _ in globals_.values()})
+    real = {k: v for k, v in globals_.items() if k != "_decided"}
+    clash = ({n for n, _ in routines.values()} & {n for n, _ in real.values()})
     if clash:
         raise SystemExit(
             "a name is used for both a routine and a global: "
             + ", ".join(sorted(clash))
             + "\n  rename one of them in the symbol file; a %define would "
               "rewrite the label.")
-    for kind, table in (("routine", routines), ("global", globals_)):
+    for kind, table in (("routine", routines), ("global", real)):
         seen = {}
         for addr, (name, _) in sorted(table.items(), key=lambda kv: repr(kv[0])):
             # Two keys may share a name when they are the same address reached
@@ -162,7 +173,8 @@ def preamble(routines, globals_):
            "; are not the reason -- check the listing it was made from.",
            "; ---------------------------------------------------------------",
            ""]
-    for (seg, addr), (name, why) in sorted(globals_.items(),
+    for (seg, addr), (name, why) in sorted(
+            ((k, v) for k, v in globals_.items() if k != "_decided"),
                                            key=lambda kv: (kv[0][0] or "",
                                                            kv[0][1])):
         pad = " " * max(1, 22 - len(name))
@@ -232,8 +244,10 @@ def audit(text, routines, globals_, unplaced=None):
                          text):
         seg = (m.group(1) or "").rstrip(":").lower() or None
         refs.add((seg, int(m.group(2), 16)))
-    unnamed = sorted(refs - set(globals_),
+    decided = globals_.get("_decided", set())
+    unnamed = sorted((k for k in refs - set(globals_) if k[1] not in decided),
                      key=lambda k: ((k[0] or ""), k[1]))
+    settled = len([k for k in refs - set(globals_) if k[1] in decided])
 
     # The set that has to be covered is what the program transfers control to,
     # not what has a prologue. Karateka's symbol file read "nothing is unnamed"
@@ -285,10 +299,10 @@ def audit(text, routines, globals_, unplaced=None):
     else:
         print("  no unnamed tail-call entries")
 
-    named = len(refs) - len(unnamed)
-    print(f"  covers {named} of {len(refs)} bracketed constants")
-    print("    (some of those are displacements into a struct rather than "
-          "addresses; the listing cannot tell you which)")
+    named = len(refs) - len(unnamed) - settled
+    print(f"  covers {named} of {len(refs)} bracketed constants"
+          + (f", and {settled} more are recorded as displacements or as not "
+             f"addresses at all" if settled else ""))
     if ghost:
         placed = [a for a in ghost if a not in (unplaced or {})]
         if placed:
