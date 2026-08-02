@@ -185,6 +185,15 @@ class Machine:
         # prompts is swallowed by an animation loop long before the prompt
         # appears. Triggering on an address puts the key where it is wanted.
         self.at_keys = {}
+        # A gated queue: keys wait here and one is released whenever execution
+        # reaches any address in `self.gates`. --at ties a key to one place;
+        # this ties the whole sequence to "wherever the program actually reads
+        # a key", which is what you want when a program has nine such places
+        # and polls the keyboard tens of thousands of times between them.
+        self.gates = set()
+        self.gated = []
+        self.gate_every = 400_000        # instructions between releases
+        self.last_release = 0
         # Every file read, when asked for. A short read is a silent failure in
         # a program that checks the byte count: Genus's container reader treats
         # 83 bytes where it asked for 84 as a corrupt archive and returns an
@@ -361,6 +370,19 @@ class Machine:
             if self.ptr_watch[off] <= 0:
                 del self.ptr_watch[off]
 
+        if self.gated and off in self.gates:
+            self.keys.append(self.gated.pop(0))
+            self._sync_kbd()
+        elif (self.gated and not self.keys
+                and self.steps - self.last_release > self.gate_every):
+            # Nothing to hook: Crt reads the BIOS buffer directly, so there is
+            # no interrupt and no call site to trigger on. Make one key
+            # available at a steady interval instead and let the program take
+            # it when it next looks. The queue holds one key at a time, so the
+            # pacing is still one key per read.
+            self.last_release = self.steps
+            self.keys.append(self.gated.pop(0))
+            self._sync_kbd()
         pending = self.at_keys.get(off)
         if pending:
             self.keys.append(pending.pop(0))
@@ -396,11 +418,25 @@ class Machine:
             uc.reg_write(UC_X86_REG_CX, self.ticks >> 16)
             uc.reg_write(UC_X86_REG_DX, self.ticks & 0xFFFF)
         elif num == 0x16 and ah in (0x00, 0x10):
+            # And on a blocking read too. A screen that calls ReadKey without
+            # polling first would otherwise wait for ever: the gate fires on
+            # the poll, and there is no poll.
+            if not self.keys and self.gated:
+                self.keys.append(self.gated.pop(0))
+            self._sync_kbd()
             # Read a key, blocking. There is nothing to block on here, so an
             # empty queue returns zero rather than hanging.
             uc.reg_write(UC_X86_REG_AX, self.keys.pop(0) if self.keys else 0)
             self.keys_read += 1
         elif num == 0x16 and ah in (0x01, 0x11):
+            # Release one gated key when the program *asks whether* a key is
+            # waiting, not when it reads one. Gating on the read alone
+            # deadlocks any `repeat until KeyPressed` loop: the poll never sees
+            # a key, so the read is never reached, so the key is never
+            # released. Releasing on an empty queue gives exactly one key per
+            # read, which is what a prompt expects.
+            if not self.keys and self.gated:
+                self.keys.append(self.gated.pop(0))
             # Peek. The answer is in the zero flag: set means nothing waiting.
             # Unicorn's interrupt hook does not run a real interrupt sequence,
             # so no FLAGS word is pushed and none is popped by an iret -- what
@@ -488,6 +524,25 @@ class Machine:
                  + struct.pack("<I", path.stat().st_size)
                  + path.name.upper().encode("ascii", "replace")[:12] + b"\x00")
         uc.mem_write(self.dta, entry)
+
+    # The BIOS keyboard buffer, at 0040:001A onward. Turbo Pascal's Crt unit
+    # does not call INT 16h to answer KeyPressed -- it compares the buffer's
+    # head and tail pointers in the BIOS data area directly. A harness that
+    # only answers the interrupt is invisible to it, and any `repeat until
+    # KeyPressed` loop waits for ever. The Oregon Trail sits on its landmark
+    # screens exactly that way.
+    KB_HEAD, KB_TAIL, KB_BUF = 0x41A, 0x41C, 0x41E
+
+    def _sync_kbd(self):
+        """Make the BIOS buffer agree with the queue: one key waiting, or none."""
+        if self.keys:
+            self.uc.mem_write(self.KB_BUF, struct.pack("<H", self.keys[0]))
+            self.uc.mem_write(self.KB_HEAD, struct.pack("<H", 0x1E))
+            self.uc.mem_write(self.KB_TAIL, struct.pack("<H", 0x20))
+        else:
+            self.uc.mem_write(self.KB_HEAD, struct.pack("<H", 0x1E))
+            self.uc.mem_write(self.KB_TAIL, struct.pack("<H", 0x1E))
+
 
     def _dos(self, uc, ah):
         ax = uc.reg_read(UC_X86_REG_AX)
@@ -879,6 +934,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary")
+    ap.add_argument("--gate", metavar="ADDR[,ADDR...]", default="",
+                    help="release one --keys entry each time execution reaches "
+                         "any of these addresses -- typically every call site "
+                         "of the routine that reads a key")
     ap.add_argument("--watch-ptr", metavar="ADDR[:N]", default="",
                     help="dump DS:SI and ES:DI when an address is reached, "
                          "N times (default 4)")
@@ -937,6 +996,18 @@ def main():
     if args.exec_map:
         m.exec_map = set()
 
+    if args.gate:
+        m.gates = {int(a, 16) for a in args.gate.split(",") if a.strip()}
+        m.gated, m.keys = m.keys, []
+        print(f"gated: {len(m.gated)} keys, released at "
+              f"{len(m.gates)} addresses")
+    m.trace_io = args.trace_io
+    for item in (x for x in args.watch_ptr.split(",") if x.strip()):
+        a, _, n = item.partition(":")
+        m.ptr_watch[int(a, 16)] = int(n) if n else 4
+        m.trace_io = True
+
+
     watch = [int(x, 16) for x in args.watch.split(",")] if args.watch else []
     varlist = [int(x, 16) for x in args.vars.split(",")] if args.vars else []
     if watch:
@@ -985,15 +1056,12 @@ def main():
             for line in text.split("\n"):
                 print(f"      {line}")
 
-    m.trace_io = args.trace_io
-    for item in (x for x in args.watch_ptr.split(",") if x.strip()):
-        a, _, n = item.partition(":")
-        m.ptr_watch[int(a, 16)] = int(n) if n else 4
-        m.trace_io = True
-
     for item in (x for x in args.at.split(",") if x.strip()):
         a, _, k = item.partition("=")
-        m.at_keys.setdefault(int(a, 16), []).append(int(k, 0))
+        # Same convention as --keys: 0x.. is a full AX, anything else is the
+        # character itself.
+        val = int(k, 0) if k.lower().startswith("0x") else ord(k[0])
+        m.at_keys.setdefault(int(a, 16), []).append(val)
     if m.at_keys:
         print("keys on arrival: " + ", ".join(
             f"{a:#x} -> {len(v)}" for a, v in sorted(m.at_keys.items())))
