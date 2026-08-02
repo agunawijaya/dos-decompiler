@@ -185,6 +185,16 @@ class Machine:
         # prompts is swallowed by an animation loop long before the prompt
         # appears. Triggering on an address puts the key where it is wanted.
         self.at_keys = {}
+        # Every file read, when asked for. A short read is a silent failure in
+        # a program that checks the byte count: Genus's container reader treats
+        # 83 bytes where it asked for 84 as a corrupt archive and returns an
+        # error its caller turns into a blank screen.
+        # Addresses at which to dump DS:SI and ES:DI. A watch that only reads
+        # globals cannot see a string being compared on the stack, which is
+        # where the interesting ones live.
+        self.ptr_watch = {}
+        self.trace_io = False
+        self.io_log = []
         self.pending_key = None     # what port 0x60 should hand over next
         self.files = Path(files) if files else None
         self.open_files = {}        # handle -> [bytes, position, name]
@@ -334,6 +344,23 @@ class Machine:
             self.ticks += 1
             uc.mem_write(0x46C, struct.pack("<I", self.ticks))
         off = addr - self.img_bias
+        if off in self.ptr_watch:
+            def rd(seg, ofs, n=16):
+                try:
+                    return bytes(uc.mem_read((seg << 4) + ofs, n))
+                except UcError:
+                    return b""
+            ds = uc.reg_read(UC_X86_REG_DS)
+            es = uc.reg_read(UC_X86_REG_ES)
+            si = uc.reg_read(UC_X86_REG_SI)
+            di = uc.reg_read(UC_X86_REG_DI)
+            self.io_log.append(
+                f"at {off:#07x}  DS:SI={ds:04X}:{si:04X} {rd(ds, si)!r}"
+                f"  ES:DI={es:04X}:{di:04X} {rd(es, di)!r}")
+            self.ptr_watch[off] -= 1
+            if self.ptr_watch[off] <= 0:
+                del self.ptr_watch[off]
+
         pending = self.at_keys.get(off)
         if pending:
             self.keys.append(pending.pop(0))
@@ -551,6 +578,9 @@ class Machine:
             self.next_handle += 1
             self.open_files[h] = [path.read_bytes(), 0, path.name]
             self.file_reads.append(path.name)
+            if self.trace_io:
+                self.io_log.append(f"open {path.name} -> handle {h}, "
+                                   f"{len(self.open_files[h][0]):,} bytes")
             self._ok(uc, h)
             return
         if ah == 0x3E:                      # close
@@ -564,9 +594,14 @@ class Machine:
             if f is None:
                 self._fail(uc, 6)           # invalid handle
                 return
-            data, pos, _ = f
+            data, pos, fname = f
             chunk = data[pos:pos + n]
             f[1] = pos + len(chunk)
+            if self.trace_io:
+                short = "  SHORT" if len(chunk) < n else ""
+                self.io_log.append(
+                    f"read {fname} handle {bx} at {pos} want {n} got "
+                    f"{len(chunk)}{short}")
             uc.mem_write((ds << 4) + dx, chunk)
             self._ok(uc, len(chunk))
             return
@@ -628,6 +663,9 @@ class Machine:
             whence = ax & 0xFF
             base = {0: 0, 1: f[1], 2: len(f[0])}.get(whence, 0)
             f[1] = max(0, min(len(f[0]), base + off))
+            if self.trace_io:
+                self.io_log.append(f"seek {f[2]} handle {bx} whence {whence} "
+                                   f"-> {f[1]}")
             uc.reg_write(UC_X86_REG_DX, (f[1] >> 16) & 0xFFFF)
             self._ok(uc, f[1] & 0xFFFF)
             return
@@ -841,6 +879,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary")
+    ap.add_argument("--watch-ptr", metavar="ADDR[:N]", default="",
+                    help="dump DS:SI and ES:DI when an address is reached, "
+                         "N times (default 4)")
+    ap.add_argument("--trace-io", action="store_true",
+                    help="log every file open, read and seek")
     ap.add_argument("--at", metavar="ADDR=KEY[,...]", default="",
                     help="hand a key over when the program reaches an address, "
                          "rather than queueing it blind. Repeat an address to "
@@ -942,6 +985,12 @@ def main():
             for line in text.split("\n"):
                 print(f"      {line}")
 
+    m.trace_io = args.trace_io
+    for item in (x for x in args.watch_ptr.split(",") if x.strip()):
+        a, _, n = item.partition(":")
+        m.ptr_watch[int(a, 16)] = int(n) if n else 4
+        m.trace_io = True
+
     for item in (x for x in args.at.split(",") if x.strip()):
         a, _, k = item.partition("=")
         m.at_keys.setdefault(int(a, 16), []).append(int(k, 0))
@@ -994,6 +1043,12 @@ def main():
             {"stopped": why, "steps": m.steps, "blits": m.blits}, indent=2),
             encoding="utf-8")
         print(f"wrote {args.json}")
+    if m.trace_io and m.io_log:
+        print("")
+        print(f"file activity ({len(m.io_log)} operations):")
+        for line in m.io_log:
+            print("   " + line)
+
     if args.exec_map:
         hit = sorted(a for a in m.exec_map if a >= 0)
         Path(args.exec_map).write_text(chr(10).join(f"{a:x}" for a in hit))
