@@ -115,6 +115,7 @@ PALETTES = {
 
 
 ZF = 0x40                       # the zero flag, bit 6 of FLAGS
+IF = 0x200                      # the interrupt flag, bit 9 -- see _fire_isr
 CF = 0x01                       # the carry flag -- DOS's error flag
 
 # One fixed timestamp for every file, packed the way DOS packs them: the date
@@ -168,6 +169,14 @@ class Machine:
         # flush loops. See the AH=01 handler for why this exists.
         self.polls = 0
         self.poll_patience = None
+        # The interrupt NUMBER to deliver periodically, and how often. None
+        # means do not -- right for a program that reads 0040:006C rather than
+        # hooking the vector. A number, not an address, so that nothing is
+        # delivered until the program has installed a handler. See _fire_isr.
+        self.isr_vector = None
+        self.isr_every = 20_000
+        self.isr_fired = 0
+        self.isr_masked = 0     # deliveries skipped because IF was clear
         self.ticks = 0          # what INT 1Ah reports, one per call
         self.stop_off = None    # --stop-at, counted rather than first-hit
         self.stop_after = 1
@@ -278,8 +287,10 @@ class Machine:
                 self.uc.reg_write(r, SEG)
             self.uc.reg_write(UC_X86_REG_SP, 0xFFFE)
             self.next_para = SEG + ((len(image) + 0xFFF) >> 4)
+            self._enable_interrupts()
         else:
             self._load_mz(image, self.mz)
+            self._enable_interrupts()
             # Above the block DOS would have given the program: the image plus
             # whatever `minalloc` demanded, which for a packed file covers the
             # room the decompressor needs.
@@ -810,17 +821,113 @@ class Machine:
         """
         if start is None:
             start = getattr(self, "mz_entry", 0)
-        try:
-            self.uc.emu_start(BASE + LOAD + start,
-                              BASE + LOAD + stop if stop is not None
-                              else BASE + 0xFFFF,
-                              count=budget)
-        except UcError as e:
-            self.stopped = self.stopped or f"fault: {e} at {self._where()}"
+        addr = BASE + LOAD + start
+        end = BASE + LOAD + stop if stop is not None else BASE + 0xFFFF
+        left = budget
+        while left > 0:
+            n = min(left, self.isr_every) if self.isr_vector else left
+            try:
+                self.uc.emu_start(addr, end, count=n)
+            except UcError as e:
+                self.stopped = self.stopped or f"fault: {e} at {self._where()}"
+                break
+            left -= n
+            if self.stopped is not None:
+                break
+            cs = self.uc.reg_read(UC_X86_REG_CS)
+            ip = self.uc.reg_read(UC_X86_REG_IP)
+            addr = (cs << 4) + ip
+            if addr == end or not self.isr_vector or left <= 0:
+                break
+            addr = self._fire_isr(cs, ip)
         if self.stopped is None:
-            self.stopped = ("reached the stop address" if stop is not None
-                            else "budget exhausted")
+            if stop is not None:
+                self.stopped = "reached the stop address"
+            else:
+                # Say WHERE the budget ran out, not just that it did. A run
+                # that ends on the budget is usually a run stuck in a loop,
+                # and without an address the only move left is to raise the
+                # budget -- which is the wrong move, and an expensive one:
+                # The Oregon Trail was given 1.5 then 3 billion instructions
+                # and produced byte-identical results both times, because it
+                # had stopped making progress long before either limit.
+                self.stopped = f"budget exhausted at {self._where()}"
         return self.stopped
+
+    def _enable_interrupts(self):
+        """Start with IF set, the way DOS hands a program control.
+
+        Unicorn starts with FLAGS at 0x0002 -- interrupts disabled -- which no
+        real program has ever seen. It went unnoticed while nothing here
+        delivered an interrupt; the moment something did, every delivery was
+        correctly refused and the timer never ticked.
+        """
+        self.uc.reg_write(UC_X86_REG_EFLAGS,
+                          self.uc.reg_read(UC_X86_REG_EFLAGS) | IF)
+
+    def _fire_isr(self, cs, ip):
+        """Deliver a timer interrupt to the handler the program installed.
+
+        Ticking the BIOS word at 0040:006C is not enough for a game that hooks
+        the timer itself. The Oregon Trail installs this at image 0x10441:
+
+            push ax..bp / mov ax, 0x3348 / mov ds, ax   ; DGROUP, hardcoded
+            les ax, [0x16B2] / add ax, 1 / adc dx, 0    ; a 32-bit counter
+            mov [0x16B2], ax / mov [0x16B4], dx
+            iret
+
+        and its hunting mini-game then waits for that counter to become
+        non-zero, in five instructions at image 0x764F. Nothing in an emulator
+        that only answers interrupts ever runs the handler, so the counter
+        stays at zero and the loop spins for ever -- 3,000,000,000 instructions
+        produced byte-identical output to 1,500,000,000, which is what a run
+        that has stopped making progress looks like.
+
+        So do what the hardware does: push FLAGS, CS and IP, and continue at
+        the handler. Its own `iret` pops the frame and resumes exactly where
+        the program was interrupted, which is the whole point of the frame.
+
+        Take an interrupt *number* and read the live vector, rather than an
+        address. An earlier version took the address and was wrong in a way
+        worth keeping: The Oregon Trail ships packed with LZEXE, so twenty
+        thousand instructions in, the handler's address still holds compressed
+        bytes. Jumping there destroyed the run -- no interrupts requested, no
+        ports written, no keys read, and 99,999 timer interrupts delivered
+        into rubbish. Reading the vector each time waits for the program to
+        install its handler, because until it does the slot still points at
+        our own stub and there is nothing to deliver.
+        """
+        flags = self.uc.reg_read(UC_X86_REG_EFLAGS) & 0xFFFF
+        if not flags & IF:
+            # Hardware does not deliver a maskable interrupt while IF is
+            # clear, and neither may this. Ignoring that broke a run after
+            # 26.9 million instructions with two interrupts delivered: Turbo
+            # Pascal's Crt closes `cli` around the port writes in Sound and
+            # Delay, and a frame pushed inside one of those leaves the routine
+            # somewhere it cannot return from. Respecting IF is not politeness,
+            # it is the contract the program was written against.
+            self.isr_masked += 1
+            return (cs << 4) + ip
+        vec = self.uc.mem_read(self.isr_vector * 4, 4)
+        off, seg = struct.unpack("<HH", vec)
+        if seg == (STUBS >> 4) or (seg == 0 and off == 0):
+            return (cs << 4) + ip          # not hooked yet -- nothing to do
+        sp = self.uc.reg_read(UC_X86_REG_SP)
+        ss = self.uc.reg_read(UC_X86_REG_SS)
+        flags = self.uc.reg_read(UC_X86_REG_EFLAGS) & 0xFFFF
+        sp = (sp - 6) & 0xFFFF
+        self.uc.mem_write((ss << 4) + sp, struct.pack("<HHH", ip, cs, flags))
+        self.uc.reg_write(UC_X86_REG_SP, sp)
+        # CS must move with the jump. Unicorn keeps a segment base and a
+        # 16-bit IP separately, so restarting at the handler's linear address
+        # while CS still names the interrupted segment leaves the two
+        # disagreeing -- and one delivery was enough to end a run 26.9 million
+        # instructions in, every time, at the same instruction. Frequency was
+        # never the variable: 20,000 crashed after two deliveries and 200,000
+        # after one.
+        self.uc.reg_write(UC_X86_REG_CS, seg)
+        self.isr_fired += 1
+        return (seg << 4) + off
 
     def _where(self):
         """CS:IP and the bytes there, because a fault without an address is not
@@ -996,6 +1103,15 @@ def main():
     ap.add_argument("--watch", help="log calls arriving at these offsets")
     ap.add_argument("--vars", default="0x6d9b,0x6d9c,0x6d97",
                     help="variables to record at each watched call")
+    ap.add_argument("--timer-isr", metavar="INT[,N]",
+                    help="deliver interrupt INT (hex, e.g. 1c) to whatever "
+                         "handler the program has installed, every N "
+                         "instructions (default 20000), pushing a real "
+                         "FLAGS/CS/IP frame so its iret resumes correctly. "
+                         "For a game that hooks the timer and waits on a "
+                         "counter its own handler increments. The vector is "
+                         "read at each delivery, so nothing is sent until the "
+                         "program has hooked it")
     ap.add_argument("--poll-patience", type=int, metavar="N",
                     help="answer INT 16h AH=01 with 'nothing waiting' until it "
                          "has been asked N times since the last real read. "
@@ -1036,6 +1152,13 @@ def main():
     if args.exec_map:
         m.exec_map = set()
 
+    if args.timer_isr:
+        spec = args.timer_isr.split(",")
+        m.isr_vector = int(spec[0], 16)
+        if len(spec) > 1:
+            m.isr_every = int(spec[1], 0)
+        print(f"timer ISR: INT {m.isr_vector:02X}h every "
+              f"{m.isr_every} instructions, once the program hooks it")
     if args.poll_patience is not None:
         m.poll_patience = args.poll_patience
         print(f"poll patience: {args.poll_patience} (a flush loop sees an "
@@ -1080,6 +1203,10 @@ def main():
     outs = sorted({p for d, p, _ in m.ports if d == "out"})
     if outs:
         print("  ports written: " + ", ".join(f"{p:#04x}" for p in outs))
+    if m.isr_fired or m.isr_masked:
+        print(f"  timer interrupts delivered: {m.isr_fired:,}"
+              + (f", {m.isr_masked:,} skipped with interrupts disabled"
+                 if m.isr_masked else ""))
     if args.keys:
         print(f"  keyboard: {m.keys_read} reads, {len(m.keys)} of "
               f"{len(keys)} keys unused")

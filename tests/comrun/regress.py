@@ -20,6 +20,7 @@ wait asks until the answer changes. --poll-patience answers "nothing waiting"
 until the question has been repeated N times since the last real read. These
 build both loops as tiny .COM programs and check each one gets what it needs.
 """
+import struct
 import sys
 from pathlib import Path
 
@@ -112,6 +113,126 @@ def _():
     if m.polls != 0:
         raise AssertionError(f"polls left at {m.polls} after a blocking read")
     return "reset to 0"
+
+
+# A program that waits on a word only an interrupt handler ever changes. This
+# is The Oregon Trail's hunting loop in miniature: it hooks the timer, its
+# handler increments a counter, and the game spins until the counter moves.
+# Ticking 0040:006C does nothing for it, because nothing reads 0040:006C.
+SPIN = bytes((
+    0x83, 0x3E, 0x00, 0x02, 0x00,   # 0100  cmp word [0200], 0
+    0x74, 0xF9,                     # 0105  je 0100
+    0xEB, 0xFE,                     # 0107  jmp $
+)) + bytes(0x17) + bytes((
+    0xFF, 0x06, 0x00, 0x02,         # 0120  inc word [0200]
+    0xCF,                           # 0124  iret
+))
+
+
+TIMER = 0x1C                     # the BIOS user timer tick
+
+
+def spin_run(with_isr, budget=200_000, hooked=True):
+    m = comrun.Machine(SPIN)
+    if hooked:
+        # What the program itself would do: put the handler in the vector.
+        m.uc.mem_write(TIMER * 4,
+                       struct.pack("<HH", comrun.LOAD + 0x20, comrun.SEG))
+    if with_isr:
+        m.isr_vector = TIMER
+        m.isr_every = 5_000
+    m.run(budget=budget)
+    counter = int.from_bytes(m.uc.mem_read(comrun.BASE + 0x200, 2), "little")
+    return counter, m
+
+
+@case("a program waiting on its own timer handler spins for ever")
+def _():
+    counter, m = spin_run(with_isr=False)
+    if counter:
+        raise AssertionError("the counter moved with no handler running")
+    return "counter 0, as the bug behaves"
+
+
+@case("--timer-isr delivers the interrupt and the wait ends")
+def _():
+    counter, m = spin_run(with_isr=True)
+    if counter == 0:
+        raise AssertionError("the handler never ran")
+    if m.isr_fired == 0:
+        raise AssertionError("isr_fired was not counted")
+    return f"counter {counter}, {m.isr_fired} interrupts delivered"
+
+
+@case("the iret frame resumes the interrupted instruction")
+def _():
+    # If FLAGS/CS/IP were pushed in the wrong order the iret returns to
+    # rubbish, and the give-away is that the program never reaches its
+    # jmp $ -- so check the counter stopped growing once it escaped.
+    counter, m = spin_run(with_isr=True, budget=400_000)
+    ip = m.uc.reg_read(comrun.UC_X86_REG_IP)
+    if ip != 0x107:
+        raise AssertionError(f"resumed wrong: IP is {ip:#06x}, not 0x0107")
+    return "back at jmp $, so the frame was correct"
+
+
+@case("nothing is delivered until the program hooks the vector")
+def _():
+    # The Oregon Trail ships packed. Twenty thousand instructions in, the
+    # handler's address still holds compressed bytes, and an earlier version
+    # that took an address rather than an interrupt number jumped into them:
+    # 99,999 interrupts delivered, no interrupts requested, no ports written,
+    # no keys read, and a run that left the image.
+    counter, m = spin_run(with_isr=True, hooked=False)
+    if m.isr_fired:
+        raise AssertionError(
+            f"{m.isr_fired} interrupts sent to an unhooked vector")
+    if counter:
+        raise AssertionError("the counter moved with no handler installed")
+    return "0 delivered, as it must be"
+
+
+@case("a handler in another segment runs and returns")
+def _():
+    # This exercises the far-handler path. It does NOT reproduce the failure
+    # that path had, and saying so is the point of the comment.
+    #
+    # Restarting at a handler's linear address while CS still named the
+    # interrupted segment ended a run of The Oregon Trail after a single
+    # delivery, at 26,900,030 instructions, every time. Writing CS with the
+    # handler's segment fixed it: 139 deliveries and a run that went the
+    # distance. The attribution is a controlled experiment on the real
+    # program -- remove the write and the crash comes back, restore it and
+    # it does not.
+    #
+    # This fixture passes either way. Its handler is straight-line code whose
+    # only memory access is DS-relative, so nothing in it depends on CS, and
+    # the iret restores CS regardless. What actually breaks in the real
+    # program between entry and iret is not established, and a check that
+    # cannot fail must not be described as guarding against it.
+    m = comrun.Machine(SPIN)
+    far = comrun.SEG + 0x100                      # a segment of its own
+    m.uc.mem_write((far << 4) + 0x30,
+                   bytes((0xFF, 0x06, 0x00, 0x02, 0xCF)))   # inc / iret
+    m.uc.mem_write(TIMER * 4, struct.pack("<HH", 0x30, far))
+    m.isr_vector, m.isr_every = TIMER, 5_000
+    m.run(budget=200_000)
+    # The handler's `inc word [0200]` is DS-relative, and DS is still the
+    # program's, so a working delivery moves the counter and comes back.
+    counter = int.from_bytes(m.uc.mem_read(comrun.BASE + 0x200, 2), "little")
+    if counter == 0:
+        raise AssertionError("the far handler never ran")
+    if m.uc.reg_read(comrun.UC_X86_REG_IP) != 0x107:
+        raise AssertionError("did not resume at jmp $ -- CS and IP disagree")
+    return f"counter {counter}, resumed correctly"
+
+
+@case("no timer ISR by default")
+def _():
+    m = comrun.Machine(b"\xEB\xFE")
+    if m.isr_vector is not None:
+        raise AssertionError(f"default vector is {m.isr_vector}")
+    return "None"
 
 
 def main():
