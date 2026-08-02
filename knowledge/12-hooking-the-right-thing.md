@@ -186,3 +186,52 @@ The general rule, and the reason this section exists after two rounds of giving
 up: **"there is nothing to test it against" is a statement about the test you
 thought of, not about the routine.** A routine with no specification still has
 callers, and callers are a specification written by someone who knew.
+
+## Name a global by what its values do, not only by who writes them
+
+Who-touches-what named 134 of Karateka's globals and stalled. A global used
+twice gives two data points and no shape. But the attract sequence is the demo
+*playing the game* -- `[0x156]` selects the AI chooser and the whole fight
+machinery runs -- so every one of them is being exercised. What was missing was
+not access to the program; it was watching the *values* rather than the
+instructions.
+
+Recording every write and classifying the sequence separates the kinds cheaply:
+
+    flag         two values, one of them zero
+    counter      rises by one and resets
+    countdown    falls by one and reloads to the same number
+    coordinate   small steps in both directions
+    pointer      large, always inside one span
+    constant     written repeatedly with the same value -- a reset, not a store
+
+The shape does not name anything by itself. It cuts the candidates down far
+enough that the routines touching it decide, which is what the previous pass
+could not do.
+
+**Two traps, and the second is the more useful.**
+
+`SS` and `DS` had the same base -- `0x16DA << 4` is exactly the data segment --
+so a hook on "the data segment" caught every stack push. Seventeen thousand
+addresses of noise. Track only what the code names as an *absolute* global,
+which is a fixed list you can extract from the listing first.
+
+And the finding that moved the number most was not a naming technique at all.
+Fourteen "globals" were only ever written with `0x5555` or `0x2055`, at
+addresses eighty bytes apart. Those are CGA pixel patterns and eighty is a
+scanline: `DS:0x0337` is a **16,000-byte off-screen frame**, and it ends at
+`0x4217`, exactly where the blitter's own globals begin. Forty addresses that
+looked like separate variables were rows inside one buffer.
+
+**When a set of addresses share a stride and a value vocabulary, they are one
+object.** `[di + 0x337]` is not a global with a displacement; it is the screen.
+
+## Where to stop
+
+113 of Karateka's globals are still unnamed and 94 of them are referenced twice
+or fewer. That is the honest floor: two uses cannot distinguish a flag from a
+counter, let alone say what it counts.
+
+Quote both figures whenever you quote either. 64% of the addresses and 90% of
+the references are the same fact seen from two ends, and the gap between them
+is the shape of what is left.

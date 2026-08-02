@@ -46,6 +46,27 @@ def load_symbols(path):
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     routines = {int(k, 16): tuple(v) for k, v in raw["routines"].items()}
     globals_ = {int(k, 16): tuple(v) for k, v in raw["globals"].items()}
+
+    # A name used for both a routine and a global is silently fatal: the global
+    # becomes a `%define`, the routine's label is rewritten to the same word,
+    # and NASM is handed `0x4230:` where a label should be. The error it gives
+    # points at the label and says nothing about the collision, so catch it
+    # here where the cause is obvious.
+    clash = ({n for n, _ in routines.values()} & {n for n, _ in globals_.values()})
+    if clash:
+        raise SystemExit(
+            "a name is used for both a routine and a global: "
+            + ", ".join(sorted(clash))
+            + "\n  rename one of them in the symbol file; a %define would "
+              "rewrite the label.")
+    for kind, table in (("routine", routines), ("global", globals_)):
+        seen = {}
+        for addr, (name, _) in sorted(table.items()):
+            if name in seen:
+                raise SystemExit(
+                    f"two {kind}s share the name {name!r}: "
+                    f"0x{seen[name]:05X} and 0x{addr:05X}")
+            seen[name] = addr
     return routines, globals_
 
 

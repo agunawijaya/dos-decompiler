@@ -52,7 +52,7 @@ specifications, *watched* during a real run to see what the program actually
 passes, and *read* where the body says it outright.
 
 What is **not** finished is the data. The code references 312 distinct
-data-segment addresses and 127 have names — 41% of the addresses, but **77% of
+data-segment addresses and 199 have names — 64% of the addresses, but **90% of
 the references**, because what is left is mostly touched once or twice.
 
 Routines are the easy half: an entry point, callers, and behaviour you can
