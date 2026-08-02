@@ -162,6 +162,12 @@ class Machine:
         self.trace = trace
         self.keys = list(keys)  # AX values INT 16h will hand out, in order
         self.keys_read = 0
+        # Polls of INT 16h AH=01 since the last blocking read, and how many to
+        # answer "nothing waiting" before admitting there is. None disables it
+        # and restores the old behaviour, which is right for a game with no
+        # flush loops. See the AH=01 handler for why this exists.
+        self.polls = 0
+        self.poll_patience = None
         self.ticks = 0          # what INT 1Ah reports, one per call
         self.stop_off = None    # --stop-at, counted rather than first-hit
         self.stop_after = 1
@@ -433,6 +439,7 @@ class Machine:
             # empty queue returns zero rather than hanging.
             uc.reg_write(UC_X86_REG_AX, self.keys.pop(0) if self.keys else 0)
             self.keys_read += 1
+            self.polls = 0
         elif num == 0x16 and ah in (0x01, 0x11):
             # Release one gated key when the program *asks whether* a key is
             # waiting, not when it reads one. Gating on the read alone
@@ -447,6 +454,29 @@ class Machine:
             # so no FLAGS word is pushed and none is popped by an iret -- what
             # is written here is what the program sees.
             flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            # Two loops ask this question and they want opposite answers.
+            #
+            #   while KeyPressed do ReadKey;      { throw away type-ahead }
+            #   repeat until KeyPressed;          { wait for the player }
+            #
+            # Answering "yes, a key is waiting" satisfies the second and is
+            # eaten by the first, which is why a queue meant for a whole game
+            # vanishes in one screen: The Oregon Trail consumed 88 keys in 88
+            # reads without ever pausing. Answering "no" does the reverse and
+            # hangs the wait.
+            #
+            # What separates them is persistence. A flush asks a handful of
+            # times and gives up; a wait asks until the answer changes. So say
+            # no until the question has been repeated `poll_patience` times
+            # since the last real read, then say yes. The threshold is a
+            # measurement of the program's behaviour, not of ours -- if a game
+            # flushed with a longer loop than it waits with, this would be the
+            # wrong way round, and the symptom would be visible as keys
+            # disappearing again.
+            self.polls += 1
+            if self.poll_patience is not None and self.polls < self.poll_patience:
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | ZF)
+                return
             if self.keys:
                 uc.reg_write(UC_X86_REG_AX, self.keys[0])
                 flags &= ~ZF
@@ -966,6 +996,11 @@ def main():
     ap.add_argument("--watch", help="log calls arriving at these offsets")
     ap.add_argument("--vars", default="0x6d9b,0x6d9c,0x6d97",
                     help="variables to record at each watched call")
+    ap.add_argument("--poll-patience", type=int, metavar="N",
+                    help="answer INT 16h AH=01 with 'nothing waiting' until it "
+                         "has been asked N times since the last real read. "
+                         "Defeats a `while KeyPressed do ReadKey` flush loop, "
+                         "which otherwise swallows the whole --keys queue")
     ap.add_argument("--keys", help="keystrokes for INT 16h, comma separated: "
                                    "a character, or a full AX as 0xSSCC "
                                    "(scancode:ASCII)")
@@ -1001,6 +1036,10 @@ def main():
     if args.exec_map:
         m.exec_map = set()
 
+    if args.poll_patience is not None:
+        m.poll_patience = args.poll_patience
+        print(f"poll patience: {args.poll_patience} (a flush loop sees an "
+              "empty keyboard)")
     if args.gate:
         m.gates = {int(a, 16) for a in args.gate.split(",") if a.strip()}
         m.gated, m.keys = m.keys, []
