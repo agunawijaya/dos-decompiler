@@ -174,9 +174,23 @@ def preamble(routines, globals_):
 
 
 def routine_comments(text, routines):
-    """Put each routine's evidence directly above its label."""
+    """Put each routine's evidence directly above its label.
+
+    A name whose address has no label still belongs in the listing. comrec
+    labels what something branches to, so an address nothing reaches comes out
+    as `db` bytes -- Karateka's five-byte `push bp / mov bp, sp / pop bp / ret`
+    at 0x02A0A is real, and is documented precisely because nothing calls it.
+    Renaming had nowhere to put that, so the name existed only in the symbol
+    file. It goes above the `db` line instead, found by the offset comment
+    comrec writes on every one.
+    """
     lines = text.split("\n")
     byname = {name: (addr, why) for addr, (name, why) in routines.items()}
+    labelled = {int(m.group(1), 16)
+                for m in re.finditer(r"^L_([0-9A-Fa-f]{5}):", text, re.M)}
+    byname.update({name: (addr, why) for addr, (name, why) in routines.items()})
+    orphans = {addr: (name, why) for addr, (name, why) in routines.items()
+               if addr not in labelled}
     out = []
     for line in lines:
         m = re.match(r"^([A-Za-z_]\w*):", line)
@@ -186,11 +200,22 @@ def routine_comments(text, routines):
             out.append(f"; ---- image 0x{addr:05X} " + "-" * 40)
             if why:
                 out.append(f"; {why}")
+        else:
+            m = re.search(r";\s*0x([0-9A-Fa-f]{5})\s*$", line)
+            if m and int(m.group(1), 16) in orphans:
+                name, why = orphans.pop(int(m.group(1), 16))
+                out.append("")
+                out.append(f"; ---- image 0x{int(m.group(1), 16):05X} "
+                           + "-" * 40)
+                out.append(f"; {name} -- no label: nothing branches here, so "
+                           f"comrec emits the bytes rather than a routine")
+                if why:
+                    out.append(f"; {why}")
         out.append(line)
-    return "\n".join(out)
+    return "\n".join(out), orphans
 
 
-def audit(text, routines, globals_):
+def audit(text, routines, globals_, unplaced=None):
     """What the symbol file misses, and what it names that is not there.
 
     A name that never substitutes cannot fail loudly. Hard Hat Mack carried a
@@ -215,13 +240,18 @@ def audit(text, routines, globals_):
     print("    (some of those are displacements into a struct rather than "
           "addresses; the listing cannot tell you which)")
     if ghost:
-        print(f"  {len(ghost)} routine names were applied nowhere -- no label "
-              "in the listing matches: "
-              + ", ".join(f"0x{a:05X}" for a in ghost[:8])
-              + ("..." if len(ghost) > 8 else ""))
-        print("    (either the address has no label because nothing calls it, "
-              "or the key is in the wrong coordinate system. Both look like "
-              "this, and both are silent without this line)")
+        placed = [a for a in ghost if a not in (unplaced or {})]
+        if placed:
+            print(f"  {len(placed)} routine names have no label and were "
+                  "written in as comments: "
+                  + ", ".join(f"0x{a:05X}" for a in placed[:8])
+                  + ("..." if len(placed) > 8 else ""))
+        left = [a for a in ghost if a in (unplaced or {})]
+        if left:
+            print(f"  {len(left)} routine names landed nowhere at all: "
+                  + ", ".join(f"0x{a:05X}" for a in left[:8]))
+            print("    (no label and no line carrying that offset -- most "
+                  "likely a key in the wrong coordinate system)")
     if unnamed:
         show = ", ".join((f"{s}:" if s else "") + f"0x{a:04X}"
                          for s, a in unnamed[:10])
@@ -275,7 +305,7 @@ def main():
     routines, globals_ = load_symbols(args.symbols)
     text = src.read_text(encoding="latin-1")
     text, hits = rename(text, routines, globals_)
-    text = routine_comments(text, routines)
+    text, orphans = routine_comments(text, routines)
     out = Path(args.out)
     out.write_text(preamble(routines, globals_) + text, encoding="latin-1")
 
@@ -283,7 +313,8 @@ def main():
     print(f"  applied: {hits['routines']} label references, "
           f"{hits['globals']} memory references")
     print(f"  wrote {out}")
-    audit(src.read_text(encoding="latin-1"), routines, globals_)
+    audit(src.read_text(encoding="latin-1"), routines, globals_,
+          unplaced=orphans)
 
     if not (args.nasm and args.original):
         print("\n  (pass --nasm to rebuild and check it still matches)")

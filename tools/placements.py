@@ -96,8 +96,12 @@ CELL_WIDTHS = (7, 8)
 class Triple:
     """One (column, row, selector) convention a drawing routine reads."""
 
-    def __init__(self, col, row, sel, scale):
+    def __init__(self, col, row, sel, scale, masks_low=False):
         self.col, self.row, self.sel, self.scale = col, row, sel, scale
+        # Whether the routine does `and si, 0xff00` before the lookup. If it
+        # does, only the high byte selects; if it does not, both bytes do and
+        # the low one usually carries a per-iteration delta.
+        self.masks_low = masks_low
 
     def __repr__(self):
         return (f"col=[{self.col:#06x}] row=[{self.row:#06x}] "
@@ -128,8 +132,9 @@ def analyse_drawer(rec, addr):
     """
     col = row = None
     scale = 1
-    out = []
-    for o, t, g in routine(rec, addr):
+    out, closed_at = [], []
+    body = routine(rec, addr)
+    for n, (o, t, g) in enumerate(body):
         m = re.match(r"^mul byte \[(0x[0-9a-f]+)\]$", t)
         if m:
             col = int(m.group(1), 16)
@@ -145,11 +150,21 @@ def analyse_drawer(rec, addr):
         m = re.match(r"^mov si, word \[(0x[0-9a-f]+)\]$", t)
         if m and col is not None and row is not None:
             out.append(Triple(col, row, int(m.group(1), 16), scale))
+            closed_at.append(n)
             col = row = None
             continue
         m = re.match(r"^mov al, (\d+)$", t)
         if m and int(m.group(1)) in CELL_WIDTHS:
             scale = int(m.group(1))       # about to multiply the column by it
+
+    # `and si, 0xff00` comes *after* the load that closes a triple, so the mask
+    # belongs to the triple before it, not the one after. Attaching it as it is
+    # seen gave place_pair's first triple the wrong answer and its second the
+    # right one, and the coverage metric could not see the difference.
+    for k, tr in enumerate(out):
+        stop = closed_at[k + 1] if k + 1 < len(closed_at) else len(body)
+        tr.masks_low = any(re.match(r"^and si, 0xff00$", body[j][1])
+                           for j in range(closed_at[k] + 1, stop))
     return out
 
 
@@ -169,12 +184,52 @@ def find_drawers(rec):
     return out
 
 
+class Run:
+    """A rectangle of pixels, from a routine that draws without a sprite.
+
+    Sprite placement is not the only primitive a game has. Hard Hat Mack's
+    floor is three horizontal lines, its lift shaft a vertical one, and its
+    hoist cables four more -- all drawn by one routine that walks a column
+    range against a row range and plots. Nothing identifies such a routine
+    from the inside: there is no sprite pointer to close a triple on, which is
+    why `find_drawers` cannot see it and why the caller has to name it.
+    """
+
+    def __init__(self, col0, col1, row0, row1, step=1, site=None):
+        self.col0, self.col1 = col0, col1
+        self.row0, self.row1 = row0, row1
+        self.step = 2 if step else 1
+        self.site = site
+
+    @property
+    def vertical(self):
+        """Which way the routine walks is decided by the parameters, not by a
+        flag: equal column bounds mean it steps the row instead."""
+        return self.col0 == self.col1
+
+    def points(self):
+        if self.vertical:
+            lo, hi = sorted((self.row0, self.row1))
+            return [(self.col0, r) for r in range(lo, hi + 1)]
+        lo, hi = sorted((self.col0, self.col1))
+        return [(c, self.row0) for c in range(lo, hi + 1, self.step)]
+
+    def __repr__(self):
+        return (f"Run({'v' if self.vertical else 'h'} "
+                f"cols {self.col0:#04x}..{self.col1:#04x}, "
+                f"rows {self.row0:#04x}..{self.row1:#04x}, step {self.step})")
+
+
 class Extractor:
-    def __init__(self, rec, drawers=None, load_base=0x100):
+    def __init__(self, rec, drawers=None, load_base=0x100, fillers=None):
         self.r = rec
         self.ins = sorted(rec.decoded.items())
         self.idx = {o: i for i, (o, _) in enumerate(self.ins)}
         self.drawers = drawers if drawers is not None else find_drawers(rec)
+        # {routine address: (col_from, col_to, row_from, row_to)} -- the four
+        # byte variables a filler reads. Declared, not detected; see Run.
+        self.fillers = dict(fillers or {})
+        self.runs = []
         self.base = load_base
         self.image = rec.image
         self.unparsed = []
@@ -233,7 +288,21 @@ class Extractor:
             if self.step(state, t, nxt):
                 continue
             if t.startswith("call") and g is not None:
-                if g in self.drawers:
+                if g in self.fillers:
+                    self.sites += 1
+                    spec = self.fillers[g]
+                    vals = [state["bytes"].get(a) for a in spec[:4]]
+                    step = state["bytes"].get(spec[4]) if len(spec) > 4 else 0
+                    if all(isinstance(v, int) for v in vals):
+                        self.explained += 1
+                        self.runs.append(
+                            Run(*vals, step=step if isinstance(step, int) else 0,
+                                site=o))
+                    # A filler consumes its parameters the way a drawer does,
+                    # except the step, which the caller sets once for a group.
+                    for a in spec[:4]:
+                        state["bytes"].pop(a, None)
+                elif g in self.drawers:
                     self.sites += 1
                     got = self.emit(state, o, self.drawers[g])
                     if got:
@@ -297,6 +366,29 @@ class Extractor:
         if m:
             state["al"] = ("var", int(m.group(1), 16))
             return True
+        m = re.match(r"^add al, byte \[(bx|si) \+ (0x[0-9a-f]+)\]$", t)
+        if m:
+            # A selector is often a base plus a per-iteration delta:
+            #   mov word [SEL], 0x1B00
+            #   mov al, byte [SEL]  /  add al, byte [bx + DELTAS]  /  mov [SEL], al
+            # Losing the delta leaves every sprite in a run at the base shape,
+            # which is why Hard Hat Mack's girders all came out as the same
+            # cell -- right position, wrong picture, and the coverage metric
+            # could not tell because a placement was still produced.
+            base = self.resolve(state, state.get("al"))
+            # Collapse the base now. Deferring it lets the expression name the
+            # very byte it is about to be stored into -- `mov al, [SEL]` then
+            # `add al, ...` then `mov [SEL], al` -- and resolving that recurses
+            # until the depth guard returns None.
+            state["al"] = ("add", base if base is not None else state.get("al"),
+                           ("tab", int(m.group(2), 16), m.group(1)))
+            return True
+        m = re.match(r"^add al, byte \[(0x[0-9a-f]+)\]$", t)
+        if m:
+            base = self.resolve(state, state.get("al"))
+            state["al"] = ("add", base if base is not None else state.get("al"),
+                           ("var", int(m.group(1), 16)))
+            return True
         m = re.match(r"^mov (bl|cl), byte \[(0x[0-9a-f]+)\]$", t)
         if m:
             state[m.group(1)[0] + "x"] = self.resolve(
@@ -329,9 +421,26 @@ class Extractor:
             # The selector is often computed rather than written whole:
             #     mov bl, [level] / mov al, [bx + table] / add ax, 0x2800
             # picks a variant per level and adds the sprite base.
-            v = self.resolve(state, state.get("al"))
-            if v is not None:
-                state["al"] = (int(m.group(1), 16) >> 8) * 256 + v * 256
+            # Kept symbolic. Resolving here uses whatever the loop counter
+            # happens to be at this instruction, which is its value on the
+            # first pass -- so every sprite in a run got the first one's
+            # variant. The whole point of a per-iteration delta is that it
+            # varies, and emit_one is the only place that knows the index.
+            state["al"] = ("hi", int(m.group(1), 16) >> 8, state.get("al"))
+            return True
+        m = re.match(r"^mov word \[(0x[0-9a-f]+)\], ax$", t)
+        if m:
+            a = int(m.group(1), 16)
+            v = state.get("al")
+            if isinstance(v, int):
+                state["words"][a] = v
+                state["bytes"][a] = v & 0xFF
+                state["bytes"][a + 1] = v >> 8
+            else:
+                # Symbolic: the high byte carries the selector, the low is 0.
+                state["words"].pop(a, None)
+                state["bytes"][a] = 0
+                state["bytes"][a + 1] = ("hibyte", v)
             return True
         m = re.match(r"^mov byte \[(0x[0-9a-f]+)\], al$", t)
         if m:
@@ -355,7 +464,15 @@ class Extractor:
             return True
         m = re.match(r"^mov word \[(0x[0-9a-f]+)\], (0x[0-9a-f]+)$", t)
         if m:
-            state["words"][int(m.group(1), 16)] = int(m.group(2), 16)
+            a, v = int(m.group(1), 16), int(m.group(2), 16)
+            state["words"][a] = v
+            # A word write sets both bytes, and code reads them back:
+            # `mov word [SEL], 0x1B00` then `mov al, byte [SEL]` is how a
+            # selector's base is fetched before a per-iteration delta is added
+            # to it. Recording only the word left that read to fall through to
+            # the file's initial byte, which is a different number.
+            state["bytes"][a] = v & 0xFF
+            state["bytes"][a + 1] = v >> 8
             return True
         m = re.match(r"^mov word \[(0x[0-9a-f]+)\], ax$", t)
         if m:
@@ -389,6 +506,18 @@ class Extractor:
             if addr in state["bytes"]:
                 return self.resolve(state, state["bytes"][addr], regs, depth + 1)
             return self.byte(addr)
+        if kind == "hibyte":
+            w = self.resolve(state, v[1], regs, depth + 1)
+            return None if w is None else (w >> 8) & 0xFF
+        if kind == "hi":
+            # `add ax, 0xNN00` after a byte load: the result is a word whose
+            # high byte is the base plus the byte, and whose low byte is zero.
+            b = self.resolve(state, v[2], regs, depth + 1)
+            return None if b is None else (((v[1] + b) & 0xFF) << 8)
+        if kind == "add":
+            a = self.resolve(state, v[1], regs, depth + 1)
+            b = self.resolve(state, v[2], regs, depth + 1)
+            return None if a is None or b is None else (a + b) & 0xFF
         if kind == "tab":
             # Which register indexes the table decides which loop varies it.
             reg = v[2] if len(v) > 2 else "bx"
@@ -421,8 +550,23 @@ class Extractor:
         # every iteration, so it is evaluated once per index -- but only for
         # registers something it reads is actually indexed by. Repeating a call
         # whose operands are all constants would emit one sprite N times.
-        uses = {v[2] if len(v) > 2 else "bx"
-                for v in raws if isinstance(v, tuple) and v[0] == "tab"}
+        def indexed_by(v, into):
+            """Which registers a value depends on, however deeply nested.
+
+            A selector can be ("add", base, ("tab", T, "bx")). Looking only at
+            the outermost tuple misses the table underneath it, the loop is not
+            unrolled, and a run of fourteen girders collapses to one.
+            """
+            if not isinstance(v, tuple):
+                return
+            if v[0] == "tab":
+                into.add(v[2] if len(v) > 2 else "bx")
+            for part in v[1:]:
+                indexed_by(part, into)
+
+        uses = set()
+        for v in raws:
+            indexed_by(v, uses)
 
         def span(reg, count):
             top = s.get(reg)
@@ -459,15 +603,28 @@ class Extractor:
     def raw_selector(self, s, tr):
         """The selector as tracked, before resolving.
 
-        The drawers mask the sprite pointer with 0xFF00, so only the high byte
-        of the selector word carries the sprite number -- and code that sets it
-        often writes that byte directly rather than writing the word.
+        Some drawers mask the pointer with 0xFF00, and for those only the high
+        byte of the selector word carries the sprite number. The rest add the
+        two bytes together, and then the low byte matters: it is where a
+        per-iteration delta lands. Hard Hat Mack has one drawer of each kind
+        and the difference is not cosmetic -- reading the high byte alone put
+        every girder in a run at the same shape, and produced a placement every
+        time, so the coverage metric stayed at 100%.
         """
+        hi = None
         if tr.sel in s["words"]:
-            return s["words"][tr.sel] >> 8
-        if tr.sel + 1 in s["bytes"]:
-            return s["bytes"][tr.sel + 1]
-        return None
+            hi = s["words"][tr.sel] >> 8
+        elif tr.sel + 1 in s["bytes"]:
+            hi = s["bytes"][tr.sel + 1]
+        if hi is None or tr.masks_low:
+            return hi
+        lo = s["bytes"].get(tr.sel)
+        if lo is None:
+            if tr.sel in s["words"]:
+                lo = s["words"][tr.sel] & 0xFF
+            else:
+                return hi
+        return ("add", hi, lo)
 
     def coverage(self):
         """(explained, reached, fraction) over the placement calls in the tree.
