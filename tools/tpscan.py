@@ -246,6 +246,7 @@ def string_ref_score(img, base, lo, hi):
     Returns (resolved, total).
     """
     resolved = total = 0
+    hi = min(hi, len(img))
     for i in range(lo, max(lo, hi - 5)):
         if img[i] != 0xBF or img[i + 3] != 0x0E or img[i + 4] != 0x57:
             continue
@@ -283,9 +284,16 @@ def rescue_by_strings(img, calls, keep, code_end_para, factor=3):
         changed = False       # spans, so keep going until nothing moves
         for cand in sorted(set(calls) - set(keep)):
             order = sorted(keep)
-            prev = max((s for s in order if s < cand), default=None)
+            # Segment 0 is the implicit predecessor. The program's own unit is
+            # far-called by nobody, so it is never in `keep`, and requiring a
+            # predecessor silently skipped every candidate below the first
+            # kept segment. That lost The Oregon Trail's hunting unit -- 7 KB,
+            # one far call, and the only place the hunting rules live -- and
+            # the loss was invisible: its strings simply resolved against the
+            # wrong base and looked like data.
+            prev = max((s for s in order if s < cand), default=0)
             nxt = min((s for s in order if s > cand), default=code_end_para)
-            if prev is None or not (prev < cand < nxt):
+            if not (prev <= cand < nxt):
                 continue
             lo, hi = cand << 4, nxt << 4
             if hi - lo < 0x200:
