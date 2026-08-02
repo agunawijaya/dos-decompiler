@@ -200,6 +200,38 @@ def _():
     raise AssertionError("a truncated image decoded silently")
 
 
+@case("2bpp CGA: the colour map is mode flags, not a palette")
+def _():
+    # A CGA header whose sixteen-colour map reads black, dark red, black,
+    # black -- which is what The Oregon Trail's LOGO.004 actually contains.
+    # Read literally, three of the four indices render identically and the
+    # picture loses its foreground. The mode flags say palette 1, and the four
+    # colours must come from there instead.
+    rows = [[(x + y) & 3 for x in range(16)] for y in range(4)]
+    head = [(0, 0, 0), (0x60, 0, 0)] + [(0, 0, 0)] * 14
+    pcx = pcxlib.Pcx(make_pcx(rows, 2, palette16=head))
+    pal = pcxlib.palette_for(pcx, None)
+    if len(set(pal[:4])) != 4:
+        raise AssertionError(f"only {len(set(pal[:4]))} distinct colours: {pal[:4]}")
+    if pal[0] != (0, 0, 0):
+        raise AssertionError(f"background not taken from the file: {pal[0]}")
+    return f"four distinct colours, background honoured"
+
+
+@case("2bpp CGA: bit 6 of the flags selects the palette")
+def _():
+    rows = [[1, 2, 3, 0]]
+    zero = pcxlib.palette_for(
+        pcxlib.Pcx(make_pcx(rows, 2, palette16=[(0, 0, 0), (0x00, 0, 0)] + [(0, 0, 0)] * 14)), None)
+    one = pcxlib.palette_for(
+        pcxlib.Pcx(make_pcx(rows, 2, palette16=[(0, 0, 0), (0x40, 0, 0)] + [(0, 0, 0)] * 14)), None)
+    if zero[1:4] == one[1:4]:
+        raise AssertionError("the flag byte changed nothing")
+    if one[1] != (85, 255, 255):
+        raise AssertionError(f"palette 1 should start cyan, got {one[1]}")
+    return "green/red and cyan/magenta told apart"
+
+
 def main():
     failures = 0
     for name, fn in CASES:

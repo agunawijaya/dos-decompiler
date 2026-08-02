@@ -133,13 +133,15 @@ def mz_header(data):
     if len(data) < 0x20 or data[:2] not in (b"MZ", b"ZM"):
         return None
     last, pages, nreloc, hdr_paras = struct.unpack_from("<HHHH", data, 2)
+    minalloc = struct.unpack_from("<H", data, 10)[0]
     ss, sp, _, ip, cs, reloc = struct.unpack_from("<HHHHHH", data, 14)
     hdr = hdr_paras * 16
     end = (pages - 1) * 512 + (last or 512)
     if not (0 < hdr <= len(data)):
         return None
     return {"hdr": hdr, "end": min(end, len(data)), "nreloc": nreloc,
-            "reloc": reloc, "cs": cs, "ip": ip, "ss": ss, "sp": sp}
+            "reloc": reloc, "cs": cs, "ip": ip, "ss": ss, "sp": sp,
+            "minalloc": minalloc}
 
 
 class Machine:
@@ -158,11 +160,18 @@ class Machine:
         self.watch = {}
         self.steps = 0
         self.stopped = None
+        self.recent = [0] * 512
         self.pending_key = None     # what port 0x60 should hand over next
         self.files = Path(files) if files else None
         self.open_files = {}        # handle -> [bytes, position, name]
         self.next_handle = 5        # 0-4 are the standard ones
-        self.next_para = 0x4000     # where INT 21h AH=48 hands out memory
+        # Where INT 21h AH=48 hands out memory. This is set properly once the
+        # image is loaded; a fixed 0x4000 was fine while every program here was
+        # a .COM under 64 KB, and quietly wrong for anything larger. The
+        # Oregon Trail unpacks to 201 KB, so DOS was handing its font library a
+        # buffer that overlapped the program's own stack, and the corruption
+        # only surfaced 1.16 million instructions later as a `retf` to nowhere.
+        self.next_para = 0x4000
         self.file_reads = []        # what the program opened
         self.file_misses = []       # and what it looked for and did not find
         self.dta = BASE + 0x80
@@ -219,8 +228,14 @@ class Machine:
                       UC_X86_REG_SS):
                 self.uc.reg_write(r, SEG)
             self.uc.reg_write(UC_X86_REG_SP, 0xFFFE)
+            self.next_para = SEG + ((len(image) + 0xFFF) >> 4)
         else:
             self._load_mz(image, self.mz)
+            # Above the block DOS would have given the program: the image plus
+            # whatever `minalloc` demanded, which for a packed file covers the
+            # room the decompressor needs.
+            span = self.mz["end"] - self.mz["hdr"] + self.mz.get("minalloc", 0) * 16
+            self.next_para = SEG + ((span + 0xFFF) >> 4)
 
         self.uc.hook_add(UC_HOOK_INTR, self._on_int)
         self.uc.hook_add(UC_HOOK_INSN, self._on_in, None, 1, 0, UC_X86_INS_IN)
@@ -285,6 +300,10 @@ class Machine:
 
     def _on_code(self, uc, addr, size, _):
         self.steps += 1
+        # A ring of the last few addresses. A fault reports where it landed;
+        # what you need is where it came from, and by then the registers no
+        # longer say. Sixteen entries is enough to see the far call that did it.
+        self.recent[self.steps & 511] = addr
         if self.steps % self.TICK_EVERY == 0:
             self.ticks += 1
             uc.mem_write(0x46C, struct.pack("<I", self.ticks))
@@ -640,11 +659,39 @@ class Machine:
                               else BASE + 0xFFFF,
                               count=budget)
         except UcError as e:
-            self.stopped = self.stopped or f"fault: {e}"
+            self.stopped = self.stopped or f"fault: {e} at {self._where()}"
         if self.stopped is None:
             self.stopped = ("reached the stop address" if stop is not None
                             else "budget exhausted")
         return self.stopped
+
+    def _where(self):
+        """CS:IP and the bytes there, because a fault without an address is not
+        a diagnosis. The image offset is what every document quotes, so give
+        that too rather than making the reader do the arithmetic."""
+        cs = self.uc.reg_read(UC_X86_REG_CS)
+        ip = self.uc.reg_read(UC_X86_REG_IP)
+        flat = (cs << 4) + ip
+        try:
+            raw = bytes(self.uc.mem_read(flat, 8)).hex(" ")
+        except UcError:
+            raw = "unreadable"
+        hist = [self.recent[(self.steps + i) & 511] for i in range(1, 513)]
+        hist = [a - BASE - LOAD for a in hist if a]
+        # The interesting moment is not the fault, it is the step that left the
+        # program. A fault deep in low memory has already lost the trail, so
+        # report the last instructions that were still inside the image.
+        top = len(self.image) + 0x10000
+        inside = [a for a in hist if 0 <= a < top]
+        left = ""
+        for i, a in enumerate(hist):
+            if not (0 <= a < top) and i:
+                left = f"\n  left the image after {hist[i - 1]:#x}"
+                break
+        return (f"{cs:04X}:{ip:04X} (image {flat - BASE - LOAD:#08x}) "
+                f"[{raw}]{left}\n  last inside: "
+                + (" -> ".join(f"{a:#x}" for a in inside[-8:])
+                   or "(nothing in range)"))
 
     def call(self, off, budget=20_000_000):
         """Call a routine and stop when it returns.
@@ -662,7 +709,7 @@ class Machine:
             self.uc.emu_start(BASE + LOAD + off, BASE + sentinel,
                               count=budget)
         except UcError as e:
-            self.stopped = self.stopped or f"fault: {e}"
+            self.stopped = self.stopped or f"fault: {e} at {self._where()}"
         return self.stopped or "returned"
 
     def key(self, scancode, handler):

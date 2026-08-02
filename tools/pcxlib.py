@@ -189,10 +189,45 @@ def write_png(rows, palette, path, scale=1):
     return w, h
 
 
+# The two CGA four-colour palettes, high intensity, with entry 0 replaced by
+# whatever background the file asks for. Palette 1 -- cyan, magenta, white --
+# is what nearly every game used.
+CGA_PALETTES = (
+    [(0, 0, 0), (0, 170, 0), (170, 0, 0), (170, 85, 0)],        # 0: green/red
+    [(0, 0, 0), (85, 255, 255), (255, 85, 255), (255, 255, 255)],  # 1: cyan/magenta
+)
+
+
+def cga_palette(pcx):
+    """The four colours a 2bpp PCX means, which are not in its colour map.
+
+    A CGA image has four indices and the header has room for sixteen RGB
+    triples, so it is tempting to read the first four and be done. That is
+    wrong, and wrong in a way that looks plausible: ZSoft used the same sixteen
+    bytes to mean something else for CGA. Only the first entry is a colour --
+    the background -- and the *second* entry's red byte carries the mode flags,
+    with bit 6 selecting the palette and bit 5 the intensity.
+
+    The Oregon Trail's LOGO.004 is the case that caught this. Its colour map
+    reads black, dark red, black, black, so three of the four indices rendered
+    identically and the MECC wordmark vanished into its own background. The
+    decoded *indices* were right all along: rendered as CGA palette 1 they match
+    the screen the game draws, pixel for pixel, all 17,600 of them.
+    """
+    head = pcx.header_palette
+    background = head[0] if head else (0, 0, 0)
+    flags = head[1][0] if len(head) > 1 else 0
+    pal = list(CGA_PALETTES[1 if flags & 0x40 else 0])
+    pal[0] = background
+    return pal
+
+
 def palette_for(pcx, external):
     if pcx.bpp * pcx.planes > 4:
         return (external or pcx.trailing_palette()
                 or [(v, v, v) for v in range(256)])
+    if pcx.bpp == 2 and pcx.planes == 1:
+        return cga_palette(pcx)
     return pcx.header_palette
 
 
