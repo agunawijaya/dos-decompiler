@@ -373,13 +373,18 @@ class Machine:
         if self.gated and off in self.gates:
             self.keys.append(self.gated.pop(0))
             self._sync_kbd()
-        elif (self.gated and not self.keys
+        elif (self.gated and not self.keys and not self.gates
                 and self.steps - self.last_release > self.gate_every):
-            # Nothing to hook: Crt reads the BIOS buffer directly, so there is
-            # no interrupt and no call site to trigger on. Make one key
-            # available at a steady interval instead and let the program take
-            # it when it next looks. The queue holds one key at a time, so the
-            # pacing is still one key per read.
+            # No gates named: make a key available at a steady interval and
+            # let the program take it when it next looks.
+            #
+            # When gates *are* named, none of these fallbacks fire, and that is
+            # essential rather than tidy. A prompt commonly begins by draining
+            # the keyboard -- `while KeyPressed do ReadKey` -- to throw away
+            # anything typed ahead. A harness that hands out a key whenever the
+            # queue runs dry feeds that loop for ever and the screen never
+            # advances, which is exactly how The Oregon Trail's landmark
+            # screens looked for eleven attempts.
             self.last_release = self.steps
             self.keys.append(self.gated.pop(0))
             self._sync_kbd()
@@ -421,7 +426,7 @@ class Machine:
             # And on a blocking read too. A screen that calls ReadKey without
             # polling first would otherwise wait for ever: the gate fires on
             # the poll, and there is no poll.
-            if not self.keys and self.gated:
+            if not self.keys and self.gated and not self.gates:
                 self.keys.append(self.gated.pop(0))
             self._sync_kbd()
             # Read a key, blocking. There is nothing to block on here, so an
