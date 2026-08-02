@@ -98,6 +98,29 @@ believe.
 The tell is that the "address" is referenced exactly once, from inside a run
 with no incoming branch, and nothing writes it.
 
+## Count call targets, not prologues
+
+Karateka is compiled C, and its symbol file said "nothing is unnamed" against
+the only denominator that seemed natural: 120 `push bp` prologues, all named.
+The listing has **165 call targets**. Fifty-six routines the program calls had
+no name while the figure read 100%.
+
+They were not exotic. Lattice C's runtime is hand-written assembly with no
+prologue at all -- `lmul`, the console poll, the CRTC programming -- and the
+compiler generates tail entry points inside its own functions that are called
+directly and never prologued. A prologue count sees none of it.
+
+This is the denominator problem from `knowledge/12` in a second costume, and it
+is worth stating as a rule: **the set you must cover is the set of addresses
+something transfers control to.** Direct calls, jump-table entries, and the
+targets of any `call word [...]` your reconstruction resolved. Prologues are a
+way of *finding* routines, never a way of counting them.
+
+The check is two lines against the listing, and it belongs in the build:
+
+    calls = {addr for every `call L_xxxxx`}
+    unnamed = calls - set(symbols["routines"])
+
 ## Corollary: check what coordinate a key is in
 
 The same `scanline_table` entry was recorded as `0x042d`, its **file offset**,
