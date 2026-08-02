@@ -1614,7 +1614,7 @@ class Reconstructor:
         return None
 
 
-def mz_load_image(data):
+def mz_load_image(data, max_reloc=8):
     """Split an MZ into (header, load image, entry offset), if it is worth it.
 
     An MZ is normally the other pipeline's business: Ghidra loads it, applies
@@ -1648,7 +1648,20 @@ def mz_load_image(data):
         return None
     # More than a few relocations means the program moves between segments,
     # and a single base is then a wrong answer that still assembles.
-    if nreloc > 8:
+    #
+    # Eight is a guess made when Karateka was the only example, and it turns
+    # out to block real games by a margin that has nothing to do with them:
+    # Alley Cat has nine and rebuilds byte-identically at 41.4%, The Ancient
+    # Art of War has 67 and rebuilds byte-identically at 73.2% of its load
+    # image. So the limit is raisable with `--max-relocations`, deliberately
+    # and per game, rather than being quietly widened for everyone.
+    #
+    # Raising it is not free, and the cost is exactly the silence this guard
+    # was put here for. A byte-identical rebuild does **not** prove the base
+    # was right: Frogger rebuilds exactly while addressing half its own code
+    # from the wrong segment, and the only symptom is a decode rate that stays
+    # low for no visible reason. Read the decode rate as the second opinion.
+    if nreloc > max_reloc:
         return None
     return data[:hdr], data[hdr:end], (cs << 4) + ip
 
@@ -1776,6 +1789,14 @@ def main():
     ap.add_argument("--segment", action="append", default=[],
                     metavar="OFF:BASE",
                     help="a region with its own address base, e.g. 0x2B40:0")
+    ap.add_argument("--max-relocations", type=int, default=8, metavar="N",
+                    help="how many relocations an MZ may have and still take "
+                         "the .COM route (default 8). A single-segment program "
+                         "wearing an MZ header reconstructs byte-identically "
+                         "this way; one that really uses segments will also "
+                         "rebuild byte-identically and read wrongly, so raise "
+                         "this deliberately and check the decode rate, not "
+                         "just the hash")
     ap.add_argument("--entry", action="append", default=[],
                     help="extra entry point, as a file offset")
     ap.add_argument("--entries-from", metavar="symbols.json",
@@ -1808,7 +1829,7 @@ def main():
             "https://www.nasm.us/")
 
     image = Path(args.com).read_bytes()
-    mz = mz_load_image(image)
+    mz = mz_load_image(image, args.max_relocations)
     if mz is not None:
         header, image, mz_entry = mz
         print(f"format      : MZ, {len(header)}-byte header stripped; "
