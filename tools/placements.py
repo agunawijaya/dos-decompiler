@@ -109,16 +109,39 @@ class Triple:
 
 
 def routine(rec, start, limit=200):
+    """The instructions belonging to the routine at `start`.
+
+    A linear scan that stops only at `ret` runs straight through any routine
+    that ends in a tail jump -- and a routine that ends `jmp somewhere_else`
+    has no `ret` at all. Hard Hat Mack's `draw_digit` is thirteen instructions
+    ending in `jmp draw_text`; the scan read sixty-three, fifty of them
+    belonging to the high-score screen, and dutifully extracted its trophy and
+    its sign into every level.
+
+    So stop at an unconditional jump as well, unless something already seen
+    branches to or past the instruction after it. That is the ordinary
+    end-of-basic-block rule, and it is the difference between reading a routine
+    and reading everything that happens to follow it.
+    """
     ins = sorted(rec.decoded.items())
     idx = {o: i for i, (o, _) in enumerate(ins)}
     out, j = [], idx.get(start)
     if j is None:
         return out
+    pending = set()                 # forward targets something has branched to
     while j < len(ins) and len(out) < limit:
         o, (sz, t, g) = ins[j]
         out.append((o, t, g))
-        if t in ("ret", "retf"):
+        mnemonic = t.split(None, 1)[0]
+        if (mnemonic.startswith("j") or mnemonic.startswith("loop")) \
+                and g is not None and g > o:
+            pending.add(g)
+        if t in ("ret", "retf", "iret"):
             break
+        if mnemonic == "jmp":
+            nxt = ins[j + 1][0] if j + 1 < len(ins) else None
+            if nxt is None or not any(p >= nxt for p in pending):
+                break
         j += 1
     return out
 
