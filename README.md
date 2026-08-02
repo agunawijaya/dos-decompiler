@@ -786,7 +786,11 @@ tools/
   triage.py                  is this one executable in scope?
   unpack.py                  run a packer's decompressor and dump the result
   comrec.py                  rebuild a .COM as NASM source, byte-for-byte, and prove it
-    annotate.py              apply a symbol file without changing a single byte
+    annotate.py              apply a symbol file without changing a single byte,
+                             and report what it does not cover: call targets,
+                             tail-call entries, bracketed constants
+    docaudit.py              find every count in the documents, so a stale one
+                             is a line number rather than a surprise
     probelib.py              name C library routines by calling them
   gfxdump.py                 render a region as CGA graphics to a PNG, without running it
   placements.py              recover "draw sprite S at column C row R" from the code

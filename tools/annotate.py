@@ -250,6 +250,41 @@ def audit(text, routines, globals_, unplaced=None):
               + ", ".join(f"0x{a:05X}" for a in uncalled[:10])
               + ("..." if len(uncalled) > 10 else ""))
 
+    # And the entries a jump reaches from outside the routine that contains
+    # them. A jump from inside is a branch; one from outside is a call whose
+    # return the compiler folded away, and it is an address the program
+    # transfers control to just as much as a `call` is. Karateka had ten of
+    # these unnamed while the direct-call count read 165 of 165.
+    here, jmps = None, {}
+    for ln in text.splitlines():
+        m = re.match(r"^L_([0-9A-Fa-f]{5}):", ln)
+        if m:
+            here = int(m.group(1), 16)
+            continue
+        for j in re.finditer(r"\bjmp\s+(?:strict (?:near|short) )?"
+                             r"L_([0-9A-Fa-f]{5})", ln):
+            jmps.setdefault(int(j.group(1), 16), set()).add(here)
+    starts = sorted(routines)
+
+    def owner(a):
+        lo = None
+        for s in starts:
+            if s <= a:
+                lo = s
+            else:
+                break
+        return lo
+
+    tails = sorted(t for t, fr in jmps.items()
+                   if t not in routines and t not in calls
+                   and any(f is not None and owner(f) != owner(t) for f in fr))
+    if tails:
+        print(f"  {len(tails)} tail-call entries unnamed: "
+              + ", ".join(f"0x{a:05X}" for a in tails[:8])
+              + ("..." if len(tails) > 8 else ""))
+    else:
+        print("  no unnamed tail-call entries")
+
     named = len(refs) - len(unnamed)
     print(f"  covers {named} of {len(refs)} bracketed constants")
     print("    (some of those are displacements into a struct rather than "
