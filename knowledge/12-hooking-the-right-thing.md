@@ -149,3 +149,40 @@ The thirty that still have no name are printf's internal helpers and their kin.
 They take state blocks rather than arguments a specification names, so there is
 nothing to probe them against. That is a different and much smaller claim than
 the one this file used to make.
+
+## And when there is no specification to probe against, watch it work
+
+Probing settled nine of Karateka's library routines and stalled on the rest,
+which I wrote up as "printf's internal helpers take state blocks, not arguments
+a specification names, so there is nothing to test them against". True, and
+still the wrong conclusion: those routines are *called*, every second, by a
+program that works. The arguments they actually receive are evidence nobody has
+to invent.
+
+Hooking each one's entry and recording the three words above the return address
+named twenty-six more in a single twenty-million-instruction run:
+
+```
+0x05E33   4806 calls   a0 varies (2440 of them text), a1 = 0x5879 constant
+0x05879  16496 calls   -- 3.4 per call to 0x5E33
+0x04B0A   2602 calls   a0 text, a1 = 0x0050, a2 = 0xE1DA
+```
+
+`0x5E33` takes a *constant* as its second argument, and that constant is another
+routine called once per character. That is `_doscan(string, getchar_fn)` and
+nothing else. `0x4B0A` is handed a buffer, the number 80, and a pointer that
+sits exactly on slot 3 of the FILE table — `fgets`, 2,602 times, once per line
+of script the compiler read.
+
+Three signals do most of the work:
+
+* **A constant argument is a pointer to something.** A function pointer, a mode
+  string, a FILE. Follow it.
+* **Call counts have ratios.** 16,496 to 4,806 is characters per string.
+* **An argument that lands on a table's stride boundary is an element of that
+  table.** `0xE1DA - 0xE1B0 = 42 = 3 x 14`, and the stride is 14.
+
+The general rule, and the reason this section exists after two rounds of giving
+up: **"there is nothing to test it against" is a statement about the test you
+thought of, not about the routine.** A routine with no specification still has
+callers, and callers are a specification written by someone who knew.
