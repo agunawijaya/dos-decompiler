@@ -332,7 +332,7 @@ missed (13), by the routine that made them:
 ```
 
 Five names. Three sessions of "twenty-one placements" became an afternoon, and
-six bugs in the static extractor came out of it:
+eight bugs in the static extractor came out of it:
 
 - **A counted loop that runs up.** `mov bl, 1` / `mov byte [V], bl` … `inc byte
   [V]` / `cmp bl, 5` was read as the count-down shape every other loop in the
@@ -365,10 +365,26 @@ six bugs in the static extractor came out of it:
   not scratch: one routine sets it and another reads it three calls later. The
   rule has to be by address, not by direction.
 
-None of the six would have been found from the coordinates. All six are obvious
-in the twenty instructions of the routine that the caller attribution names.
+- **AL never reached the index registers.** `shl al, 1`, `mov bl, al` and
+  `inc bl` were all unrecognised, so BL kept whatever the caller had left.
+- **A stored value that still depended on a register that then moved.** Stores
+  keep the expression rather than the number, so that one call site inside a
+  loop can be evaluated once per iteration. A routine that stores its column,
+  does `inc bl`, and stores its row is storing the same expression twice —
+  both then resolve with the later BL, and the sprite comes out at its own row
+  twice over. Collapse a stored value when its register changes.
 
-**Where it ended.** 172 of 193 placements to 186, recall 89% to 96%. The seven
+None of the eight would have been found from the coordinates. All eight are
+obvious in the twenty instructions of the routine that the caller attribution
+names.
+
+**Where it ended.** 172 of 193 placements to 186, recall 89% to 96%. The last
+two bugs did not move that number at all -- the shape they concern is
+unreadable either way -- and they were worth fixing, because the reading had
+been putting a sprite at the wrong place on every screen and now puts it at the
+right one. A number that does not change is not the same as a change that did
+not happen; the referee compares tuples, and a tuple can be wrong in one field
+for a reason and in another for a bug. The seven
 that remain are one fact: a routine picks its shape with `random() & 3` from a
 table of four *different* entries, so there is no shape in the file to read,
 and a second routine that writes no selector of its own inherits that pick.

@@ -108,6 +108,15 @@ class Triple:
                 f"sel=[{self.sel:#06x}] x{self.scale}")
 
 
+def depends_on(v, reg):
+    """Whether a tracked value still needs `reg` before it is a number."""
+    if not isinstance(v, tuple):
+        return False
+    if v[0] == "tab" and (v[2] if len(v) > 2 else "bx") == reg:
+        return True
+    return any(depends_on(p, reg) for p in v[1:])
+
+
 def routine(rec, start, limit=200):
     """The instructions belonging to the routine at `start`.
 
@@ -557,6 +566,53 @@ class Extractor:
         if m:
             state["al"] = ("var", int(m.group(1), 16))
             return True
+        def freeze(reg):
+            """Collapse every stored value that still depends on `reg`.
+
+            A store keeps the expression, not the number, so that one call site
+            inside a loop can be evaluated once per iteration. But between two
+            stores a routine may *change* the register:
+
+                mov bl, al                  ; screen x 2
+                mov al, byte [bx + SPOTS]
+                mov byte [lunchbox_x], al   ; ("tab", SPOTS, "bx")
+                inc bl
+                mov al, byte [bx + SPOTS]
+                mov byte [lunchbox_y], al   ; ("tab", SPOTS, "bx")
+
+            Both are the same expression, so both resolved with the *later* BL
+            and the lunchbox came out at (39, 39) -- its row twice, on every
+            screen. Freezing at the point the register moves is safe for the
+            loop case: the drawer is called inside the body, so its site has
+            already been emitted before the counter steps at the bottom.
+            """
+            for table in ("bytes", "words"):
+                for k, v in list(state[table].items()):
+                    if depends_on(v, reg):
+                        state[table][k] = self.resolve(state, v)
+
+        # AL to an index register, and the arithmetic on the way. A routine
+        # that takes a screen number, doubles it and indexes a table of pairs
+        # does all three, and none of them was recognised -- so BL kept
+        # whatever the caller had left and spawn_lunchbox read its position
+        # out of the wrong pair on every screen.
+        if t == "shl al, 1":
+            state["al"] = ("shl", state.get("al"), 1)
+            return True
+        m = re.match(r"^mov (bl|cl), al$", t)
+        if m:
+            r = "bx" if m.group(1) == "bl" else "cx"
+            freeze(r)
+            state[r] = self.resolve(state, state.get("al"))
+            return True
+        m = re.match(r"^(inc|dec) (bl|cl)$", t)
+        if m:
+            r = "bx" if m.group(2) == "bl" else "cx"
+            freeze(r)
+            v = state.get(r)
+            state[r] = None if not isinstance(v, int) else \
+                (v + (1 if m.group(1) == "inc" else -1)) & 0xFF
+            return True
         m = re.match(r"^mov bl, byte \[(0x[0-9a-f]+)\]$", t)
         if m:
             # The index comes from a variable, not an immediate. Leaving BL
@@ -737,6 +793,9 @@ class Extractor:
             if addr in state["bytes"]:
                 return self.resolve(state, state["bytes"][addr], regs, depth + 1)
             return self.byte(addr)
+        if kind == "shl":
+            b = self.resolve(state, v[1], regs, depth + 1)
+            return None if b is None else (b << v[2]) & 0xFF
         if kind == "hibyte":
             w = self.resolve(state, v[1], regs, depth + 1)
             return None if w is None else (w >> 8) & 0xFF
