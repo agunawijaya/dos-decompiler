@@ -822,6 +822,7 @@ knowledge/
   10-data-beside-the-executable.md  the ninety files that are not the program
   11-unreached-code.md       code nothing branches to, and the 15% that was not data
   12-hooking-the-right-thing.md  running a program to find what reading cannot
+  13-naming-hand-written-assembly.md  three games with no compiler in them
 signatures/                  C runtime fingerprints: MS C 5.0, MS C 5.1, Watcom
 tests/sopwith/               the validation fixture and full case study
 tests/com/                   .COM fixtures, rebuilt byte-identically on every run

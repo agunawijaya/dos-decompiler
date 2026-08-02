@@ -42,10 +42,28 @@ import tempfile
 from pathlib import Path
 
 
+SEG = re.compile(r"^(cs|ds|es|ss):", re.I)
+
+
+def _key(k):
+    """A global's key, optionally carrying the segment it is read through.
+
+    Most games keep one data segment and a bare `0x0116` is unambiguous.
+    Zaxxon does not: it reads its tables as `[cs:0x04E8]` out of the image and
+    its variables as `[0x0055]` out of a segment that starts past the end of
+    the file. Those are different addresses that happen to share a number, so
+    the key may be written `cs:0x04E8` to bind only to that prefix.
+    """
+    m = SEG.match(k)
+    if m:
+        return (m.group(1).lower(), int(k[m.end():], 16))
+    return (None, int(k, 16))
+
+
 def load_symbols(path):
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     routines = {int(k, 16): tuple(v) for k, v in raw["routines"].items()}
-    globals_ = {int(k, 16): tuple(v) for k, v in raw["globals"].items()}
+    globals_ = {_key(k): tuple(v) for k, v in raw["globals"].items()}
 
     # A name used for both a routine and a global is silently fatal: the global
     # becomes a `%define`, the routine's label is rewritten to the same word,
@@ -61,11 +79,11 @@ def load_symbols(path):
               "rewrite the label.")
     for kind, table in (("routine", routines), ("global", globals_)):
         seen = {}
-        for addr, (name, _) in sorted(table.items()):
+        for addr, (name, _) in sorted(table.items(), key=lambda kv: repr(kv[0])):
             if name in seen:
                 raise SystemExit(
                     f"two {kind}s share the name {name!r}: "
-                    f"0x{seen[name]:05X} and 0x{addr:05X}")
+                    f"{seen[name]} and {addr}")
             seen[name] = addr
     return routines, globals_
 
@@ -78,6 +96,11 @@ def rename(text, routines, globals_):
     square brackets, because the same number appearing as an immediate is an
     immediate: `mov ax, 0x116` is the constant 278, not the health variable, and
     rewriting it would be a lie that still assembles.
+
+    A bracketed reference carrying a segment prefix matches only a key written
+    with the same prefix. `[cs:0x04E8]` and `[0x04E8]` are two addresses in
+    Zaxxon, which loads its data segment past the end of its own image, so
+    letting one name cover both would be that same lie in a different place.
     """
     hits = {"routines": 0, "globals": 0}
 
@@ -91,13 +114,33 @@ def rename(text, routines, globals_):
     text = re.sub(r"\bL_([0-9A-Fa-f]{5})\b", label, text)
 
     def mem(m):
-        addr = int(m.group(1), 16)
-        if addr in globals_:
+        seg = (m.group(1) or "").rstrip(":").lower() or None
+        key = (seg, int(m.group(2), 16))
+        if key in globals_:
             hits["globals"] += 1
-            return f"[{globals_[addr][0]}{m.group(2) or ''}]"
+            return (f"[{m.group(1) or ''}{globals_[key][0]}"
+                    f"{m.group(3) or ''}]")
         return m.group(0)
 
-    text = re.sub(r"\[(0x[0-9a-f]+)((?:\s*[-+]\s*\w+)?)\]", mem, text)
+    text = re.sub(r"\[([a-z]{2}:)?(0x[0-9a-f]+)((?:\s*[-+]\s*\w+)?)\]",
+                  mem, text)
+
+    def indexed(m):
+        seg = (m.group(1) or "").rstrip(":").lower() or None
+        key = (seg, int(m.group(3), 16))
+        if key in globals_:
+            hits["globals"] += 1
+            return (f"[{m.group(1) or ''}{m.group(2)} + "
+                    f"{globals_[key][0]}]")
+        return m.group(0)
+
+    # `[bx + 0x052d]` is a table read, and in hand-written assembly it is the
+    # commonest form there is -- Hard Hat Mack indexes almost every table this
+    # way. BP and SP are excluded because a displacement off those is a stack
+    # frame, and `[bp + 0x08]` is an argument, not whatever global happens to
+    # live at 8.
+    text = re.sub(r"\[([a-z]{2}:)?(?!bp|sp)([a-z]{2}(?:\s*\+\s*[a-z]{2})?)"
+                  r"\s*\+\s*(0x[0-9a-f]+)\]", indexed, text)
     return text, hits
 
 
@@ -111,10 +154,13 @@ def preamble(routines, globals_):
            "; are not the reason -- check the listing it was made from.",
            "; ---------------------------------------------------------------",
            ""]
-    for addr, (name, why) in sorted(globals_.items()):
+    for (seg, addr), (name, why) in sorted(globals_.items(),
+                                           key=lambda kv: (kv[0][0] or "",
+                                                           kv[0][1])):
         pad = " " * max(1, 22 - len(name))
+        note = f" ({seg}-relative)" if seg else ""
         out.append(f"%define {name}{pad}0x{addr:04x}"
-                   + (f"    ; {why}" if why else ""))
+                   + (f"    ; {why}{note}" if why or note else ""))
     out.append("")
     return "\n".join(out)
 
@@ -134,6 +180,45 @@ def routine_comments(text, routines):
                 out.append(f"; {why}")
         out.append(line)
     return "\n".join(out)
+
+
+def audit(text, routines, globals_):
+    """What the symbol file misses, and what it names that is not there.
+
+    A name that never substitutes cannot fail loudly. Hard Hat Mack carried a
+    `scanline_table` for a whole session recorded in file offsets while every
+    other key was an address, and nothing noticed, because the only symptom of
+    a key in the wrong coordinate is silence. So say both numbers out loud.
+    """
+    labels = {int(m.group(1), 16)
+              for m in re.finditer(r"^L_([0-9A-Fa-f]{5}):", text, re.M)}
+    ghost = sorted(a for a in routines if a not in labels)
+
+    refs = set()
+    for m in re.finditer(r"\[([a-z]{2}:)?(?:[a-z]{2}\s*\+\s*)?(0x[0-9a-f]+)\]",
+                         text):
+        seg = (m.group(1) or "").rstrip(":").lower() or None
+        refs.add((seg, int(m.group(2), 16)))
+    unnamed = sorted(refs - set(globals_),
+                     key=lambda k: ((k[0] or ""), k[1]))
+
+    named = len(refs) - len(unnamed)
+    print(f"  covers {named} of {len(refs)} bracketed constants")
+    print("    (some of those are displacements into a struct rather than "
+          "addresses; the listing cannot tell you which)")
+    if ghost:
+        print(f"  {len(ghost)} routine names were applied nowhere -- no label "
+              "in the listing matches: "
+              + ", ".join(f"0x{a:05X}" for a in ghost[:8])
+              + ("..." if len(ghost) > 8 else ""))
+        print("    (either the address has no label because nothing calls it, "
+              "or the key is in the wrong coordinate system. Both look like "
+              "this, and both are silent without this line)")
+    if unnamed:
+        show = ", ".join((f"{s}:" if s else "") + f"0x{a:04X}"
+                         for s, a in unnamed[:10])
+        print(f"  {len(unnamed)} unnamed: {show}"
+              + ("..." if len(unnamed) > 10 else ""))
 
 
 def sha(p):
@@ -190,6 +275,7 @@ def main():
     print(f"  applied: {hits['routines']} label references, "
           f"{hits['globals']} memory references")
     print(f"  wrote {out}")
+    audit(src.read_text(encoding="latin-1"), routines, globals_)
 
     if not (args.nasm and args.original):
         print("\n  (pass --nasm to rebuild and check it still matches)")
