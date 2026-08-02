@@ -60,6 +60,48 @@ def _key(k):
     return (None, int(k, 16))
 
 
+def load_spans(raw):
+    """`_data_spans`: a contiguous partition of the image, with a reason each.
+
+    A reference count of 100% says nothing about the bytes *between* the
+    references, and on Hard Hat Mack those were 40% of the file. The spans are
+    the other denominator: every byte inside a named extent that says what it
+    is for.
+
+    An entry is `[length, why]`, or `[name, length, why]` where the extent has
+    a name of its own. They must abut -- a gap means bytes nobody has looked
+    at, and an overlap means two readings of the same bytes, one of which is
+    wrong -- so that is checked here rather than believed.
+    """
+    raw_spans = raw.get("_data_spans", {})
+    # Span keys need not be image offsets. Karateka's are offsets into its data
+    # segment, which the entry stub puts at image + 0x6CA0, so without a base
+    # every one of them would land on no line and the tool would report 54
+    # failures against a symbol file that is right.
+    base = int(raw_spans.get("_base", "0"), 16)
+    spans = []
+    for k, v in raw_spans.items():
+        if k.startswith("_"):
+            continue
+        name = v[0] if isinstance(v[0], str) else None
+        length = next((x for x in v if isinstance(x, int)), None)
+        why = v[-1] if isinstance(v[-1], str) and len(v) > 1 else ""
+        if length is None:
+            raise SystemExit(f"_data_spans[{k}] has no length: {v!r}")
+        spans.append((base + int(k, 16), length, name, why))
+    spans.sort()
+    for (a, n, _, _), (b, _, _, _) in zip(spans, spans[1:]):
+        if a + n != b:
+            what = "a gap of" if a + n < b else "an overlap of"
+            raise SystemExit(
+                f"_data_spans: {what} {abs(b - a - n)} bytes between "
+                f"0x{a:05X}+{n} and 0x{b:05X}.\n"
+                f"  The spans have to partition the region exactly; a gap is "
+                f"bytes nobody read, and an overlap is two readings of the "
+                f"same bytes.")
+    return spans
+
+
 def load_symbols(path):
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     routines = {int(k, 16): tuple(v) for k, v in raw["routines"].items()}
@@ -73,22 +115,21 @@ def load_symbols(path):
                if k.startswith("0x")}
     for line in raw.get("_not_addresses", []):
         decided |= {int(x, 16) for x in re.findall(r"0x[0-9A-Fa-f]{4}", line)}
-    globals_["_decided"] = decided
 
     # A name used for both a routine and a global is silently fatal: the global
     # becomes a `%define`, the routine's label is rewritten to the same word,
     # and NASM is handed `0x4230:` where a label should be. The error it gives
     # points at the label and says nothing about the collision, so catch it
     # here where the cause is obvious.
-    real = {k: v for k, v in globals_.items() if k != "_decided"}
-    clash = ({n for n, _ in routines.values()} & {n for n, _ in real.values()})
+    clash = ({n for n, _ in routines.values()}
+             & {n for n, _ in globals_.values()})
     if clash:
         raise SystemExit(
             "a name is used for both a routine and a global: "
             + ", ".join(sorted(clash))
             + "\n  rename one of them in the symbol file; a %define would "
               "rewrite the label.")
-    for kind, table in (("routine", routines), ("global", real)):
+    for kind, table in (("routine", routines), ("global", globals_)):
         seen = {}
         for addr, (name, _) in sorted(table.items(), key=lambda kv: repr(kv[0])):
             # Two keys may share a name when they are the same address reached
@@ -104,7 +145,7 @@ def load_symbols(path):
                     f"two {kind}s share the name {name!r} at different "
                     f"addresses: 0x{there:05X} and 0x{here:05X}")
             seen[name] = here
-    return routines, globals_
+    return routines, globals_, decided, load_spans(raw)
 
 
 def rename(text, routines, globals_):
@@ -173,8 +214,7 @@ def preamble(routines, globals_):
            "; are not the reason -- check the listing it was made from.",
            "; ---------------------------------------------------------------",
            ""]
-    for (seg, addr), (name, why) in sorted(
-            ((k, v) for k, v in globals_.items() if k != "_decided"),
+    for (seg, addr), (name, why) in sorted(globals_.items(),
                                            key=lambda kv: (kv[0][0] or "",
                                                            kv[0][1])):
         pad = " " * max(1, 22 - len(name))
@@ -227,7 +267,172 @@ def routine_comments(text, routines):
     return "\n".join(out), orphans
 
 
-def audit(text, routines, globals_, unplaced=None):
+# `db ... ; 0x0088C  ds:0x087C` -- comrec adds the second address when the run
+# sits in a segment whose base is not the listing's, so the offset comment is
+# not always the end of the line.
+DB = re.compile(r"^(\s*)db (.*?)\s*; 0x([0-9A-Fa-f]{5})"
+                r"(\s+([a-z]{2}):0x([0-9A-Fa-f]+))?\s*$")
+
+
+def _items(body):
+    """Split a `db` operand list on the commas that are not inside quotes."""
+    out, cur, quote = [], "", None
+    for ch in body:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+            cur += ch
+        elif ch == ",":
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def _width(item):
+    return len(item) - 2 if item[:1] in ("'", '"') else 1
+
+
+def split_db(line, at):
+    """Cut a `db` run in two at a byte offset inside it, or return None.
+
+    A span boundary in the middle of a data run has no line to hang a heading
+    on -- comrec emits sixteen bytes per line from wherever the run starts, and
+    that grid does not know where a table ends. Splitting the line puts an
+    offset exactly there. NASM emits the same bytes either way, which is the
+    same rule the names follow: saying what something is must not change it.
+    """
+    m = DB.match(line)
+    if not m:
+        return None
+    indent, body, off, _, seg, segoff = m.groups()
+    off = int(off, 16)
+    delta = off - int(segoff, 16) if segoff else None
+
+    def tag(a):
+        return (f"; 0x{a:05X}"
+                + (f"  {seg}:0x{a - delta:04X}" if delta is not None else ""))
+
+    items = _items(body)
+    total = sum(_width(i) for i in items)
+    if not (off < at < off + total):
+        return None
+    head, k = [], at - off
+    for i, item in enumerate(items):
+        w = _width(item)
+        if k >= w:
+            head.append(item)
+            k -= w
+            continue
+        if k == 0:
+            tail = items[i:]
+            break
+        q = item[0]                       # the cut falls inside a string
+        head.append(f"{q}{item[1:-1][:k]}{q}")
+        tail = [f"{q}{item[1:-1][k:]}{q}"] + items[i + 1:]
+        break
+    else:
+        return None
+    def emit(items, a):
+        body = ", ".join(items)
+        pad = " " * max(1, 70 - len(indent) - 3 - len(body))
+        return f"{indent}db {body}{pad}{tag(a)}"
+
+    return [emit(head, off), emit(tail, at)]
+
+
+def span_banners(text, spans):
+    """Write each span's extent and reason into the listing where it starts.
+
+    Without this the spans are a claim in a JSON file that the reader has to
+    take on trust and cross-reference by hand. In the listing they are a
+    heading: you scroll, and the file tells you which subsystem you are in.
+
+    Three line shapes carry an offset by the time this runs: the `; ---- image`
+    heading `routine_comments` puts above every named routine, a bare `L_xxxxx`
+    label for one that has no name, and the trailing comment on a `db` run.
+    A span start matching none of them is reported rather than dropped -- it
+    means the key is in a coordinate system this listing does not use.
+    """
+    want = {a: (a, n, name, why) for a, n, name, why in spans}
+    out = []
+
+    def heading(a):
+        a, n, name, why = want.pop(a)
+        out.append("")
+        out.append(";" + "=" * 70)
+        out.append(f"; file 0x{a:05X}..0x{a + n:05X}   {n:,} bytes"
+                   + (f"   {name}" if name else ""))
+        for chunk in _wrap(why, 68):
+            out.append(f"; {chunk}")
+        out.append(";" + "=" * 70)
+
+    for line in text.split("\n"):
+        m = (re.match(r"^;\s*---- image 0x([0-9A-Fa-f]{5})", line)
+             or re.match(r"^L_([0-9A-Fa-f]{5}):", line)
+             or re.search(r";\s*0x([0-9A-Fa-f]{5})\s*$", line))
+        if m and int(m.group(1), 16) in want:
+            heading(int(m.group(1), 16))
+        # A sixteen-byte `db` line can hold more than one boundary -- Karateka
+        # has a two-byte span with another starting straight after it -- so
+        # keep cutting the remainder until none is left. This runs even when
+        # the line was itself a span start, because a line that begins one
+        # span can still contain the start of the next.
+        while True:
+            cut = min((a for a in want if split_db(line, a)), default=None)
+            if cut is None:
+                break
+            head, line = split_db(line, cut)
+            out.append(head)
+            heading(cut)
+        out.append(line)
+    return "\n".join(out), sorted(want)
+
+
+def _wrap(s, width):
+    line, out = "", []
+    for word in s.split():
+        if line and len(line) + 1 + len(word) > width:
+            out.append(line)
+            line = word
+        else:
+            line = f"{line} {word}".strip()
+    if line:
+        out.append(line)
+    return out
+
+
+def audit_spans(spans, homeless, image_bytes):
+    """Say what the spans cover, against the size of the thing they cover."""
+    if not spans:
+        print("  no _data_spans: the bytes between the named addresses are "
+              "not accounted for")
+        return
+    lo = spans[0][0]
+    hi = spans[-1][0] + spans[-1][1]
+    total = sum(n for _, n, _, _ in spans)
+    print(f"  {len(spans)} data spans cover 0x{lo:05X}..0x{hi:05X}, "
+          f"{total:,} bytes with no gap and no overlap", end="")
+    if image_bytes:
+        print(f" -- {total * 100.0 / image_bytes:.1f}% of the {image_bytes:,}"
+              f"-byte image")
+    else:
+        print()
+    if homeless:
+        print(f"  {len(homeless)} span headings had nowhere to go: "
+              + ", ".join(f"0x{a:05X}" for a in homeless[:8]))
+        print("    (a `db` run can be cut anywhere, so these are inside a run "
+              "comrec decoded as instructions: either an unlabelled "
+              "instruction, or a table the walk reached and decoded as code)")
+
+
+def audit(text, routines, globals_, decided, unplaced=None):
     """What the symbol file misses, and what it names that is not there.
 
     A name that never substitutes cannot fail loudly. Hard Hat Mack carried a
@@ -244,7 +449,6 @@ def audit(text, routines, globals_, unplaced=None):
                          text):
         seg = (m.group(1) or "").rstrip(":").lower() or None
         refs.add((seg, int(m.group(2), 16)))
-    decided = globals_.get("_decided", set())
     unnamed = sorted((k for k in refs - set(globals_) if k[1] not in decided),
                      key=lambda k: ((k[0] or ""), k[1]))
     settled = len([k for k in refs - set(globals_) if k[1] in decided])
@@ -366,10 +570,11 @@ def main():
                  f"    python <toolkit>/tools/comrec.py {args.original} "
                  f"--out {src}")
 
-    routines, globals_ = load_symbols(args.symbols)
-    text = src.read_text(encoding="latin-1")
-    text, hits = rename(text, routines, globals_)
+    routines, globals_, decided, spans = load_symbols(args.symbols)
+    raw = src.read_text(encoding="latin-1")
+    text, hits = rename(raw, routines, globals_)
     text, orphans = routine_comments(text, routines)
+    text, homeless = span_banners(text, spans)
     out = Path(args.out)
     out.write_text(preamble(routines, globals_) + text, encoding="latin-1")
 
@@ -377,8 +582,11 @@ def main():
     print(f"  applied: {hits['routines']} label references, "
           f"{hits['globals']} memory references")
     print(f"  wrote {out}")
-    audit(src.read_text(encoding="latin-1"), routines, globals_,
-          unplaced=orphans)
+    audit(raw, routines, globals_, decided, unplaced=orphans)
+    header = len(Path(args.header).read_bytes()) if args.header else 0
+    image = (len(Path(args.original).read_bytes()) - header
+             if args.original else 0)
+    audit_spans(spans, homeless, image)
 
     if not (args.nasm and args.original):
         print("\n  (pass --nasm to rebuild and check it still matches)")
