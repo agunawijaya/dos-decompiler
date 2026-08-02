@@ -307,6 +307,8 @@ class Extractor:
         state.setdefault("bx", None)       # the loop counter / index register
         state.setdefault("cx", None)       # a second index, not the loop's
         state.setdefault("si", None)       # ...usually reached through CX
+        state.setdefault("si_ptr", None)   # or SI holds a table address
+        state.setdefault("si_kind", None)  # "index" or "ptr"
         state.setdefault("al", None)
         # AL is *not* cleared on entry. Several of these routines take their
         # column or row as a register argument -- the first thing they do is
@@ -384,6 +386,13 @@ class Extractor:
                               if re.match(r"^mov byte \[0x[0-9a-f]+\], bl$", nxt)
                               else None)
             return True
+        m = re.match(r"^mov al, byte \[bx \+ si\]$", t)
+        if m:
+            if state.get("si_kind") == "ptr" and state.get("si_ptr") is not None:
+                state["al"] = ("tab", state["si_ptr"], "bx")
+            else:
+                state["al"] = None
+            return True
         m = re.match(r"^mov al, byte \[(bx|si) \+ (0x[0-9a-f]+)\]$", t)
         if m:
             # Which register indexes the table matters, and getting it wrong is
@@ -429,11 +438,25 @@ class Extractor:
         if m:
             state[m.group(1)[0] + "x"] = self.resolve(state, state.get("al"))
             return True
+        m = re.match(r"^mov si, word \[(0x[0-9a-f]+)\]$", t)
+        if m:
+            # SI is either a loop index (from CX or BX) or the address of a
+            # table (from a word variable). Which one decides how `[bx + si]`
+            # reads, so remember where it came from. Hard Hat Mack keeps its
+            # per-screen tables this way: the screen sets the pointer, the
+            # drawing loop indexes through it.
+            a = int(m.group(1), 16)
+            v = state["words"].get(a)
+            state["si_ptr"] = v if isinstance(v, int) else None
+            state["si_kind"] = "ptr"
+            return True
         if t == "mov si, cx":
             state["si"] = state.get("cx")
+            state["si_kind"] = "index"
             return True
         if t == "mov si, bx":
             state["si"] = state.get("bx")
+            state["si_kind"] = "index"
             return True
         m = re.match(r"^(shl|sal) al, 1$", t)
         if m:
@@ -601,9 +624,16 @@ class Extractor:
 
         def span(reg, count):
             top = s.get(reg)
-            if reg not in uses or not s.get(count) or top is None:
+            if reg not in uses or top is None:
                 return [top]
-            return range(top, -1, -1)
+            if s.get(count):
+                return range(top, -1, -1)      # counted loop, walked down
+            # No immediate count. If every table this placement indexes ends in
+            # 0xFF, the trip count is however many entries come before it --
+            # which is a fact in the file, not a guess. Without this the loop
+            # ran once and drew the first chain of a row of them.
+            n = self.terminated(raws, reg, top)
+            return range(top, top + n) if n > 1 else [top]
 
         inner = span("bx", "count")     # the column counter
         outer = span("si", "ccount")    # the floor counter, one level out
@@ -630,6 +660,36 @@ class Extractor:
         if not out:
             self.unparsed.append((site, why or "nothing resolved"))
         return out
+
+    def terminated(self, raws, reg, top, cap=128):
+        """How many entries a 0xFF-terminated table has, from `top`.
+
+        Returns 0 when there is no terminator within `cap`, which is the signal
+        to fall back to a single iteration -- over-unrolling a loop that has no
+        terminator would invent placements, and precision is dearer than the
+        last chain.
+        """
+        bases = set()
+
+        def collect(v):
+            if not isinstance(v, tuple):
+                return
+            if v[0] == "tab" and (v[2] if len(v) > 2 else "bx") == reg:
+                bases.add(v[1])
+            for part in v[1:]:
+                collect(part)
+
+        for v in raws:
+            collect(v)
+        if not bases:
+            return 0
+        n = 0
+        while n < cap:
+            vals = [self.byte(b + top + n) for b in bases]
+            if any(v is None or v == 0xFF for v in vals):
+                return n
+            n += 1
+        return 0
 
     def raw_selector(self, s, tr):
         """The selector as tracked, before resolving.
