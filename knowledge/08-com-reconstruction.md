@@ -650,3 +650,37 @@ ever true.
 
 Regression fixtures live in `tests/com/`. They are written rather than taken
 from a real game, because games from the period are still under copyright.
+
+## A rebuild is not a reading, and naming must not change it
+
+`comrec` finishing is the end of one job and the start of another. Karateka's
+listing is byte-identical and 99.1% of its code region carries an instruction,
+and it is still ten thousand lines of `L_02605` and `word [0x116]`. **38 of its
+120 routines are named — 32%.** Quote both numbers or the first will be read as
+the second.
+
+`annotate.py` closes the gap without weakening the claim. It takes a symbol
+file — `{address: [name, why]}` — and applies it as `%define`s and label
+renames only, so NASM emits exactly the bytes it emitted before the names
+existed, and then rebuilds and compares to prove it:
+
+```
+38 routine names, 44 globals
+  applied: 157 label references, 569 memory references
+BYTE-IDENTICAL after naming. SHA-256 c8736bba...
+```
+
+Two rules earned the hard way:
+
+**Rename globals only inside brackets.** `mov ax, 0x116` is the constant 278,
+not `player_health`. Rewriting it produces source that still assembles and is
+no longer true, which is the worst of both.
+
+**Every name carries its evidence.** The `why` field is not decoration. Three
+names in this project were published without one and had to be withdrawn --
+"the joystick routine", "hand-written assembly", "health counters" -- and each
+had been believed in the meantime because it was written down. A name is a
+claim; store the reason beside it or do not store the name.
+
+The symbol file belongs to the game and the tool belongs here. The *output*
+belongs nowhere: a byte-identical reconstruction is the program, named or not.

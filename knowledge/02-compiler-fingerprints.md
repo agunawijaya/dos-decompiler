@@ -99,6 +99,55 @@ source. Identify them by their standard shapes (`printf` family, string and
 memory routines, integer division helpers such as `__aNulmul`, `__aFldiv`) and
 set them aside rather than trying to name them as game code.
 
+## Lattice C 2.1, which announces itself
+
+Karateka (1984) settles the question without being asked. The first string in
+its data segment is the compiler's name, and the next five are its runtime's
+own start-up failures:
+
+```
+DS:0x0002   Lattice C 2.1
+DS:0x0082   Invalid stack size
+DS:0x0096   Invalid I/O redirection
+DS:0x00B0   Insufficient memory
+DS:0x00C6   *** STACK OVERFLOW ***
+```
+
+Three fingerprints agree with it, and any one of them alone would be worth
+acting on:
+
+- **The prologue carries a stack check.** Not every routine has it — 30 of 120
+  in Karateka — but where it appears the shape is unmistakable, and the branch
+  target is shared by all of them:
+
+  ```nasm
+      push bp
+      sub  sp, 6
+      jb   .overflow
+      cmp  sp, word [0x17]        ; the runtime's stack limit, a global
+      ja   .ok
+  .overflow:
+      jmp  stack_error            ; prints *** STACK OVERFLOW *** and exits 0x4C01
+  ```
+
+- **`fopen` walks a fixed FILE table.** Lattice's is an array between two
+  absolute addresses with a **stride of 14 bytes**, scanned for a slot whose
+  byte at +8 is zero. Recognising it stops you following a filename into the
+  runtime and back out again, which cost an hour here.
+
+- **The exit code is `0x4C01`**, not `0x4C00`, on every runtime error path.
+
+**A caution that cost a retraction.** Prologue density was measured at 0.4 per
+KB and read as "hand-written assembly". That figure is over the *whole file*,
+and 68% of Karateka is data; over the code region it is about four per KB,
+which is ordinary for a compiler. **Compute density over the code region the
+walk found, never over the file.**
+
+And the conclusion still has to be *mixed*: Karateka's blitter and its
+run-length decoder have no prologue at all, use every register and keep their
+state in globals. C for the game, assembly for the inner loops — which is what
+the density was really telling us before it was misread.
+
 ## Inline assembly and hand-written modules
 
 Over a quarter of Sopwith is hand-written MASM. Assembly modules do not obey C

@@ -786,6 +786,7 @@ tools/
   triage.py                  is this one executable in scope?
   unpack.py                  run a packer's decompressor and dump the result
   comrec.py                  rebuild a .COM as NASM source, byte-for-byte, and prove it
+    annotate.py              apply a symbol file without changing a single byte
   gfxdump.py                 render a region as CGA graphics to a PNG, without running it
   placements.py              recover "draw sprite S at column C row R" from the code
   pipeline.ps1               one command: .EXE in, decompiled C out

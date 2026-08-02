@@ -26,6 +26,34 @@ real mode without a single refusal. Everything hard is upstream of it:
 deciding what is a function, and downstream of it: deciding what a function is
 *called*.
 
+### And on the `.COM` route, where the answer is a rebuild
+
+| | code region | as instructions | + pinned | residue |
+|---|---|---|---|---|
+| Karateka (1984), 87,990 B | 27,805 | **91.9%** | 99.1% | 252 B |
+| Hard Hat Mack (1983) | 27,787 | 78.2% | 80.6% | 5,394 B |
+| ParaTrooper (1982) | 5,328 | 90.9% | 97.7% | 125 B |
+| Zaxxon (1984) | 8,413 | 75.8% | 78.7% | 1,796 B |
+
+All four rebuild **byte-identically**, checked by SHA-256 outside the tool that
+produced them, and all four now report *nothing in it looks like unreached
+code* — which is the claim worth making. The percentages differ mostly because
+of how much data each program keeps *between* its routines: Hard Hat Mack's
+residue is 1,201 bytes of CGA scanline offsets, 1,171 of artwork and 793 of HUD
+strings, none of it lost.
+
+### Reconstruction is not reading
+
+Karateka's reconstruction is finished in every sense the tools can measure, and
+**38 of its 120 routines are named** — 32%. Those 38 are the ones that matter:
+the drawing, the sprite format, the animation compiler, the fight loop, the hit
+test, the health system, the input chain. The other eighty are unread.
+
+That gap is worth stating plainly whenever a percentage is quoted, because
+"91.9% recovered" and "we understand this program" are different claims and the
+first is much easier to reach. A byte-identical rebuild proves the *bytes* were
+read correctly. It says nothing about whether anybody understood them.
+
 ## Validate against a period-correct compiler, not a convenient one
 
 The Watcom rebuild was the cheap ground truth: free, scriptable, no licensing

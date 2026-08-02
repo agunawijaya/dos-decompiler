@@ -107,6 +107,27 @@ declares as functions.
 `0x1000`, while a linker map numbers segments from zero. Add the bias before
 comparing, or nothing will line up and the cause is not obvious.
 
+**Asking for callers of an address in the middle of a routine always answers
+none.** This document's own author published "the joystick routine at 0x425E,
+and nothing in the image calls it" — a finding on both counts, and wrong on
+both. `0x42EC` was not an entry point at all; it was a `call` instruction
+*inside* the routine that begins at `0x42D1`, so a scan for `E8` displacements
+landing on it could only ever return zero. And `0x425E` was not the joystick:
+it writes ports `0x3BA` and `0x3BF`, which is Hercules display detection.
+
+Before concluding that nothing reaches an address, check that the address is
+somewhere anything *could* reach — a prologue, a jump target, or a word
+appearing in the data. An interior address is none of those, and "no callers"
+about one is not a finding, it is a category error.
+
+**A counter's meaning is in what it is compared against, not what sets it.**
+Two globals in Karateka are both initialised to 32 and both decremented, which
+reads as a pair of hit-point counters and was written up as one twice. They are
+a timer: the branch above them is `cmp ax, 0x14a` — a distance of 330 pixels —
+and no health counter cares how far away the other fighter is. The assignment
+and the decrement are the two least informative instructions about a variable;
+the comparison is where the meaning is.
+
 **A table's address may never appear in the program.** Two games here have hit
 this, in two different languages, six years apart. If a subscript range does not
 start at zero — `array[3..8] of string[10]` in Pascal, or the same trick written
